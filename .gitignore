@@ -1,0 +1,9 @@
+.venv/
+backend/data/
+frontend/node_modules/
+dist/
+.env
+.env.*
+chunks/
+*.redacted.txt
+
