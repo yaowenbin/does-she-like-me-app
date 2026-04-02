@@ -166,7 +166,12 @@ async def import_ocr(
         if not image_bytes:
             continue
 
-        text, used_lang = ocr_image_bytes(image_bytes, lang=lang)
+        try:
+            text, used_lang = ocr_image_bytes(image_bytes, lang=lang)
+        except RuntimeError as e:
+            # OCR 环节常见失败（缺少 pytesseract / 缺少系统 tesseract.exe / lang pack 等）
+            # 这里转成 400，让前端拿到可读错误，而不是返回 500。
+            raise HTTPException(status_code=400, detail=str(e)) from e
         if text.strip():
             ocr_texts.append(text)
         used_langs.add(used_lang)

@@ -1,13 +1,13 @@
 :root {
   /* 樱花晨光治愈系配色（浅、柔、低对比度） */
-  --bg: #ffeaf5;
-  --card: rgba(255, 255, 255, 0.95);
-  --text: #24182a;
-  --muted: rgba(36, 24, 42, 0.70);
-  --primary: #ff5fb5;
-  --primary2: #ffd1e6;
-  --border: rgba(36, 24, 42, 0.16);
-  --accent: #8a6cff;
+  --bg: #fff0f5;
+  --card: rgba(255, 255, 255, 0.92);
+  --text: #1f1a22;
+  --muted: rgba(31, 26, 34, 0.62);
+  --primary: #f06292;
+  --primary2: #e1bee7;
+  --border: rgba(31, 26, 34, 0.14);
+  --accent: #9c27b0;
 }
 
 * {
@@ -18,14 +18,8 @@ body {
   margin: 0;
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
     'Apple Color Emoji', 'Segoe UI Emoji';
-  background:
-    radial-gradient(900px 480px at 15% 5%, rgba(255, 95, 181, 0.35), transparent),
-    radial-gradient(900px 520px at 85% 15%, rgba(138, 108, 255, 0.24), transparent),
-    radial-gradient(800px 480px at 55% 100%, rgba(255, 209, 230, 0.34), transparent),
-    var(--bg);
+  background: linear-gradient(135deg, #fff0f5 0%, #f3e5f5 45%, #f7f7ff 100%);
   color: var(--text);
-  /* 提高整体饱和度，让樱花更“有力量” */
-  filter: saturate(1.18);
 }
 
 .sakura-layer {
@@ -61,9 +55,93 @@ a {
 }
 
 .container {
-  max-width: 1100px;
+  max-width: 1480px;
   margin: 0 auto;
   padding: 22px;
+}
+
+.heroBanner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 18px;
+  padding: 18px 18px;
+  margin-bottom: 10px;
+  width: 100%;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(240, 98, 146, 0.26);
+  background: linear-gradient(
+    135deg,
+    rgba(240, 98, 146, 0.14) 0%,
+    rgba(225, 190, 231, 0.12) 45%,
+    rgba(156, 39, 176, 0.06) 100%
+  );
+  backdrop-filter: blur(10px);
+  box-shadow:
+    0 28px 70px rgba(240, 98, 146, 0.14),
+    0 1px 0 rgba(255, 255, 255, 0.75) inset;
+}
+
+.heroTitle {
+  font-size: 22px;
+  font-weight: 950;
+  letter-spacing: 0.02em;
+  margin-bottom: 8px;
+  background: linear-gradient(90deg, #f06292 0%, #a98bff 70%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.heroSubtitle {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.heroSteps {
+  margin-top: 12px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.heroStep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(36, 24, 42, 0.12);
+  background: rgba(255, 255, 255, 0.55);
+}
+
+.heroStepNum {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, rgba(240, 98, 146, 0.95), rgba(156, 39, 176, 0.82));
+  color: white;
+  font-weight: 950;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 14px 32px rgba(240, 98, 146, 0.22);
+}
+
+.heroStepActive {
+  border-color: rgba(240, 98, 146, 0.45);
+  background: rgba(255, 255, 255, 0.72);
+  transform: translateY(-1px);
+  box-shadow: 0 18px 40px rgba(240, 98, 146, 0.12);
+}
+
+.heroStepActive .heroStepNum {
+  filter: saturate(1.08);
 }
 
 h1 {
@@ -85,6 +163,60 @@ label {
   margin: 10px 0 6px;
 }
 
+/* 表单行：左侧标签右对齐，控件占满剩余宽度 */
+.formRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.formRow label {
+  width: 120px;
+  text-align: right;
+  margin: 0;
+  font-weight: 600;
+}
+
+.formControl {
+  flex: 1;
+  min-width: 0;
+}
+
+.importModeRow {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 26, 34, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+}
+
+.importTabsWrap {
+  margin-bottom: 8px;
+}
+
+.importPanel {
+  margin-top: 8px;
+  padding: 12px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(31, 26, 34, 0.14);
+  background: rgba(255, 255, 255, 0.5);
+  min-height: 240px; /* 防止“有框但内容留白太大”的观感 */
+}
+
+.importPanel label {
+  margin: 0 0 8px;
+}
+
+.importTextarea {
+  min-height: 140px;
+  resize: vertical;
+}
+
+textarea::placeholder {
+  color: rgba(31, 26, 34, 0.35);
+}
+
 textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -102,8 +234,17 @@ textarea {
 
 .grid {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 14px;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.leftCol {
+  grid-column: span 3;
+}
+
+.rightCol {
+  grid-column: span 9;
 }
 
 .card {

@@ -5,6 +5,8 @@ import {
   NConfigProvider,
   NInput,
   NInputNumber,
+  NTabs,
+  NTabPane,
   NSelect,
 } from 'naive-ui'
 import {
@@ -120,9 +122,9 @@ const active = computed(() => archives.value.find((a) => a.id === activeId.value
 
 const themeOverrides = {
   common: {
-    primaryColor: '#ff5fb5',
-    primaryColorHover: '#ff4aa7',
-    primaryColorPressed: '#ff2f92',
+    primaryColor: '#F06292',
+    primaryColorHover: '#E84F7E',
+    primaryColorPressed: '#D81B60',
   },
 } as const
 
@@ -272,6 +274,7 @@ async function onImportWxTxt() {
     const res = await importWxTxt(activeId.value, txtState.files[0])
     txtState.imported = true
     txtState.importedSize = Number(res.normalized_size || 0)
+    importMode.value = 'txt'
     await refreshDetail()
   } catch (e: any) {
     error.value = e?.message || String(e)
@@ -296,6 +299,7 @@ async function onImportPaste() {
     txtState.imported = true
     txtState.importedSize = Number(res.normalized_size || 0)
     pasteState.importedSize = txtState.importedSize
+    importMode.value = 'paste'
     await refreshDetail()
   } catch (e: any) {
     error.value = e?.message || String(e)
@@ -316,7 +320,9 @@ async function onImportOcr() {
     const res = await importOcr(activeId.value, ocrState.files, { lang: 'chi_sim' })
     ocrState.importedSize = Number(res.normalized_size || 0)
     ocrState.preview = String(res.ocr_preview || '')
+    // OCR 导入成功后，后端会写入 uploaded 内容，因此分析按钮应可用
     await refreshDetail()
+    importMode.value = 'ocr'
   } catch (e: any) {
     error.value = e?.message || String(e)
   } finally {
@@ -369,6 +375,19 @@ onMounted(async () => {
 
 const badge = computed(() => badgeFor(active.value))
 
+const flowStep = computed(() => {
+  const a = active.value
+  if (!a) return 1
+  if (!a.has_upload) return 1
+  if (a.has_upload && !a.has_report) return 2
+  return 3
+})
+
+type ImportMode = 'txt' | 'ocr' | 'paste'
+const importMode = ref<ImportMode>('txt')
+
+const canAnalyze = computed(() => Boolean(detail.value?.archive?.has_upload))
+
 watch(
   () => activeId.value,
   (id) => {
@@ -381,17 +400,32 @@ watch(
   <n-config-provider :theme-overrides="themeOverrides">
     <SakuraScene />
     <div class="container">
-      <h1>她爱你嘛 · 管理页</h1>
-      <div class="muted">
-        作用：导入 wx 聊天 txt → 生成证据卡片与多透镜解读 → 调用 DeepSeek 返回报告（Markdown）。
-        <br />
-        提醒：请仅上传你有权使用的材料；不要用于骚扰或操控。
+      <div class="heroBanner">
+        <div class="heroTitle">她爱你嘛 · 管理页</div>
+        <div class="heroSubtitle">
+          作用：导入 wx 聊天 txt / 截图 OCR → 生成证据卡片与多透镜解读 → 调用 DeepSeek 返回治愈报告（Markdown）。
+        </div>
+        <div class="heroSteps">
+          <div class="heroStep" :class="{ heroStepActive: flowStep === 1 }">
+            <div class="heroStepNum">1</div>
+            选择材料
+          </div>
+          <div class="heroStep" :class="{ heroStepActive: flowStep === 2 }">
+            <div class="heroStepNum">2</div>
+            归一化导入
+          </div>
+          <div class="heroStep" :class="{ heroStepActive: flowStep === 3 }">
+            <div class="heroStepNum">3</div>
+            生成治愈报告
+          </div>
+        </div>
+        <div class="muted" style="margin-top: 10px">
+          提醒：请仅上传你有权使用的材料；不要用于骚扰或操控。
+        </div>
       </div>
 
-      <div style="height: 14px"></div>
-
       <div class="grid">
-        <div class="card">
+        <div class="card leftCol">
           <h2>档案列表</h2>
           <div class="muted" style="margin-bottom: 10px">
             点击切换档案。未分析则先导入再分析。
@@ -432,43 +466,63 @@ watch(
           <div style="height: 10px"></div>
           <h2>新建档案</h2>
 
-          <label>名称（可选）</label>
-          <n-input v-model:value="form.name" placeholder="例如：2024 暧昧期" style="width: 100%" />
+          <div class="formRow">
+            <label>名称（可选）</label>
+            <div class="formControl">
+              <n-input v-model:value="form.name" placeholder="例如：2024 暧昧期" style="width: 100%" />
+            </div>
+          </div>
 
-          <label>关系阶段（可选）</label>
-          <n-select v-model:value="form.stage" :options="stageOptions" placeholder="请选择" style="width: 100%" />
+          <div class="formRow">
+            <label>关系阶段（可选）</label>
+            <div class="formControl">
+              <n-select v-model:value="form.stage" :options="stageOptions" placeholder="请选择" style="width: 100%" />
+            </div>
+          </div>
 
-          <label>聊天场景（可选）</label>
-          <n-select
-            v-model:value="form.scenario"
-            :options="scenarioOptions"
-            placeholder="请选择"
-            style="width: 100%"
-          />
+          <div class="formRow">
+            <label>聊天场景（可选）</label>
+            <div class="formControl">
+              <n-select
+                v-model:value="form.scenario"
+                :options="scenarioOptions"
+                placeholder="请选择"
+                style="width: 100%"
+              />
+            </div>
+          </div>
 
-          <label>自愿标签：星座（可选，不必生日）</label>
-          <n-select
-            v-model:value="form.zodiac"
-            :options="zodiacOptions"
-            placeholder="例如：双子座"
-            style="width: 100%"
-            clearable
-            filterable
-            tag
-            :onCreate="createTagOption"
-          />
+          <div class="formRow">
+            <label>自愿标签：星座</label>
+            <div class="formControl">
+              <n-select
+                v-model:value="form.zodiac"
+                :options="zodiacOptions"
+                placeholder="例如：双子座"
+                style="width: 100%"
+                clearable
+                filterable
+                tag
+                :onCreate="createTagOption"
+              />
+            </div>
+          </div>
 
-          <label>自愿标签：MBTI（可选）</label>
-          <n-select
-            v-model:value="form.mbti"
-            :options="mbtiOptions"
-            placeholder="例如：ENFP"
-            style="width: 100%"
-            clearable
-            filterable
-            tag
-            :onCreate="createTagOption"
-          />
+          <div class="formRow">
+            <label>自愿标签：MBTI</label>
+            <div class="formControl">
+              <n-select
+                v-model:value="form.mbti"
+                :options="mbtiOptions"
+                placeholder="例如：ENFP"
+                style="width: 100%"
+                clearable
+                filterable
+                tag
+                :onCreate="createTagOption"
+              />
+            </div>
+          </div>
 
           <div style="height: 10px"></div>
           <n-button :disabled="loading" type="primary" :loading="loading" style="width: 100%" @click="onCreateArchive">
@@ -476,7 +530,7 @@ watch(
           </n-button>
         </div>
 
-        <div class="card">
+        <div class="card rightCol">
           <h2>导入与分析</h2>
 
           <div class="muted" style="margin-bottom: 10px">
@@ -484,112 +538,130 @@ watch(
           </div>
 
           <div v-if="activeId">
-            <label>导入 wx 聊天 txt</label>
-            <input ref="wxTxtFileInputRef" type="file" accept=".txt,text/plain" hidden @change="onWxTxtPicked" />
+            <div class="importTabsWrap">
+              <div class="muted" style="margin-bottom: 6px">导入方式</div>
+              <n-tabs v-model:value="importMode" type="segment" animated>
+                <n-tab-pane name="txt" tab="TXT">
+                  <div class="importPanel">
+                    <label>导入 wx 聊天 txt</label>
+                    <input ref="wxTxtFileInputRef" type="file" accept=".txt,text/plain" hidden @change="onWxTxtPicked" />
 
-            <div class="row" style="margin-top: 10px">
-              <n-button
-                type="default"
-                :disabled="loading"
-                @click="wxTxtFileInputRef?.click()"
-              >
-                选择 txt
-              </n-button>
-              <n-button type="primary" :disabled="loading || !txtState.files.length" :loading="loading" @click="onImportWxTxt">
-                上传并归一化
-              </n-button>
-            </div>
+                    <div class="row" style="margin-top: 10px">
+                      <n-button type="default" :disabled="loading" @click="wxTxtFileInputRef?.click()">选择 txt</n-button>
+                      <n-button
+                        type="primary"
+                        :disabled="loading || !txtState.files.length"
+                        :loading="loading"
+                        @click="onImportWxTxt"
+                      >
+                        上传并归一化
+                      </n-button>
+                    </div>
 
-            <div class="uploadFileList" v-if="txtState.files.length">
-              <div v-for="(f, idx) in txtState.files" :key="f.name + ':' + idx" class="uploadFileRow">
-                <div class="uploadFileName">{{ f.name }}</div>
-                <n-button type="error" :disabled="loading" @click="removeTxtAt(idx)">移除</n-button>
-              </div>
-            </div>
+                    <div class="uploadFileList" v-if="txtState.files.length">
+                      <div v-for="(f, idx) in txtState.files" :key="f.name + ':' + idx" class="uploadFileRow">
+                        <div class="uploadFileName">{{ f.name }}</div>
+                        <n-button type="error" size="tiny" :disabled="loading" @click="removeTxtAt(idx)">移除</n-button>
+                      </div>
+                    </div>
 
-            <div class="muted" v-if="txtState.imported" style="font-size: 12px; margin-top: 10px">
-              已导入（归一化字符数：{{ txtState.importedSize || 'ok' }}）
-            </div>
+                    <div class="muted" v-else style="font-size: 12px; margin-top: 10px">
+                      还没选择文件，先上传 `txt`。
+                    </div>
 
-            <div style="height: 16px"></div>
-
-            <label>如果无法导出：上传聊天截图（OCR，支持多张）</label>
-            <input ref="ocrFileInputRef" type="file" accept="image/*" multiple hidden @change="onOcrPicked" />
-
-            <div class="row" style="margin-top: 10px">
-              <n-button
-                type="default"
-                :disabled="loading"
-                @click="ocrFileInputRef?.click()"
-              >
-                选择截图
-              </n-button>
-              <n-button
-                type="primary"
-                :disabled="loading || ocrState.files.length === 0"
-                :loading="loading"
-                @click="onImportOcr"
-              >
-                OCR 并归一化
-              </n-button>
-            </div>
-
-            <div class="muted" v-if="ocrState.files.length" style="font-size: 12px; margin-top: 10px">
-              已选择：{{ ocrState.files.length }} 张截图
-            </div>
-
-            <div class="uploadThumbGrid" v-if="ocrPreviewUrls.length">
-              <div v-for="(url, idx) in ocrPreviewUrls" :key="url" class="uploadThumbItem">
-                <img :src="url" class="uploadThumbImg" alt="ocr-preview" />
-                <div class="uploadThumbFooter">
-                  <div class="uploadThumbName" :title="ocrState.files[idx]?.name || ''">
-                    {{ ocrState.files[idx]?.name || '截图' }}
+                    <div class="muted" v-if="txtState.imported" style="font-size: 12px; margin-top: 10px">
+                      已导入（归一化字符数：{{ txtState.importedSize || 'ok' }}）
+                    </div>
                   </div>
-                  <n-button type="error" size="tiny" :disabled="loading" @click="removeOcrAt(idx)">
-                    移除
-                  </n-button>
-                </div>
-              </div>
-            </div>
+                </n-tab-pane>
 
-            <div class="muted" v-if="ocrState.importedSize" style="font-size: 12px; margin-top: 10px">
-              已导入（归一化字符数：{{ ocrState.importedSize || 'ok' }}）
-            </div>
+                <n-tab-pane name="ocr" tab="OCR">
+                  <div class="importPanel">
+                    <label>如果无法导出：上传聊天截图（OCR，支持多张）</label>
+                    <input ref="ocrFileInputRef" type="file" accept="image/*" multiple hidden @change="onOcrPicked" />
 
-            <textarea
-              v-if="ocrState.preview"
-              v-model="ocrState.preview"
-              readonly
-              style="min-height: 120px; margin-top: 10px"
-            />
+                    <div class="row" style="margin-top: 10px">
+                      <n-button type="default" :disabled="loading" @click="ocrFileInputRef?.click()">选择截图</n-button>
+                      <n-button
+                        type="primary"
+                        :disabled="loading || ocrState.files.length === 0"
+                        :loading="loading"
+                        @click="onImportOcr"
+                      >
+                        OCR 并归一化
+                      </n-button>
+                    </div>
 
-            <div style="height: 16px"></div>
+                    <div class="muted" v-if="ocrState.files.length" style="font-size: 12px; margin-top: 10px">
+                      已选择：{{ ocrState.files.length }} 张截图
+                    </div>
+                    <div class="muted" v-else style="font-size: 12px; margin-top: 10px">
+                      还没选择截图，先点「选择截图」。
+                    </div>
 
-            <label>如果无法导出：直接粘贴聊天文本（支持 Tencent 无导出情况）</label>
-            <textarea
-              v-model="pasteState.text"
-              placeholder="把聊天内容粘贴进来即可。若你拿到的是截图转文字（OCR），也可以直接贴。"
-            />
+                    <div class="uploadThumbGrid" v-if="ocrPreviewUrls.length">
+                      <div v-for="(url, idx) in ocrPreviewUrls" :key="url" class="uploadThumbItem">
+                        <img :src="url" class="uploadThumbImg" alt="ocr-preview" />
+                        <div class="uploadThumbFooter">
+                          <div class="uploadThumbName" :title="ocrState.files[idx]?.name || ''">
+                            {{ ocrState.files[idx]?.name || '截图' }}
+                          </div>
+                          <n-button type="error" size="tiny" :disabled="loading" @click="removeOcrAt(idx)">移除</n-button>
+                        </div>
+                      </div>
+                    </div>
 
-            <div class="row" style="margin-top: 10px">
-              <n-button
-                type="primary"
-                :disabled="loading || !pasteState.text.trim()"
-                :loading="loading"
-                @click="onImportPaste"
-              >
-                粘贴并归一化
-              </n-button>
-              <div class="muted" v-if="pasteState.importedSize" style="font-size: 12px">
-                已导入（归一化字符数：{{ pasteState.importedSize || 'ok' }}）
-              </div>
+                    <div class="muted" v-if="ocrState.importedSize" style="font-size: 12px; margin-top: 10px">
+                      已导入（归一化字符数：{{ ocrState.importedSize || 'ok' }}）
+                    </div>
+
+                    <textarea
+                      v-if="ocrState.preview"
+                      v-model="ocrState.preview"
+                      readonly
+                      class="importTextarea"
+                    />
+                  </div>
+                </n-tab-pane>
+
+                <n-tab-pane name="paste" tab="粘贴">
+                  <div class="importPanel">
+                    <label>如果无法导出：直接粘贴聊天文本（支持 Tencent 无导出情况）</label>
+                    <textarea
+                      v-model="pasteState.text"
+                      class="importTextarea"
+                      placeholder="把聊天内容粘贴进来即可。若你拿到的是截图转文字（OCR），也可以直接贴。"
+                    />
+
+                    <div class="row" style="margin-top: 10px">
+                      <n-button
+                        type="primary"
+                        :disabled="loading || !pasteState.text.trim()"
+                        :loading="loading"
+                        @click="onImportPaste"
+                      >
+                        粘贴并归一化
+                      </n-button>
+                      <div class="muted" v-if="pasteState.importedSize" style="font-size: 12px">
+                        已导入（归一化字符数：{{ pasteState.importedSize || 'ok' }}）
+                      </div>
+                    </div>
+                  </div>
+                </n-tab-pane>
+              </n-tabs>
             </div>
 
             <label style="margin-top: 14px">生成温度（可选）</label>
             <n-input-number v-model:value="form.temperature" :min="0" :max="1.5" :step="0.1" style="width: 100%" />
 
             <div style="height: 10px"></div>
-            <n-button :disabled="loading" type="primary" :loading="loading" style="width: 100%" @click="onAnalyze">
+            <n-button
+              :disabled="loading || !canAnalyze"
+              type="primary"
+              :loading="loading"
+              style="width: 100%"
+              @click="onAnalyze"
+            >
               调用 DeepSeek 生成报告
             </n-button>
           </div>
