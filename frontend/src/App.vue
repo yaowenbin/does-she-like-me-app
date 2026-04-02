@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NConfigProvider,
@@ -18,6 +18,7 @@ import {
   type ArchiveSummary,
 } from './api'
 import ReportView from './components/ReportView.vue'
+import SakuraScene from './components/SakuraScene.vue'
 
 const loading = ref(false)
 const error = ref<string | null>(null)
@@ -52,8 +53,48 @@ const scenarioOptions = [
   { label: '其他', value: '其他' },
 ]
 
-const fileState = reactive({
-  file: null as File | null,
+const zodiacOptions = [
+  { label: '不填', value: '' },
+  { label: '白羊座', value: '白羊座' },
+  { label: '金牛座', value: '金牛座' },
+  { label: '双子座', value: '双子座' },
+  { label: '巨蟹座', value: '巨蟹座' },
+  { label: '狮子座', value: '狮子座' },
+  { label: '处女座', value: '处女座' },
+  { label: '天秤座', value: '天秤座' },
+  { label: '天蝎座', value: '天蝎座' },
+  { label: '射手座', value: '射手座' },
+  { label: '摩羯座', value: '摩羯座' },
+  { label: '水瓶座', value: '水瓶座' },
+  { label: '双鱼座', value: '双鱼座' },
+]
+
+const mbtiOptions = [
+  { label: '不填', value: '' },
+  { label: 'INTJ', value: 'INTJ' },
+  { label: 'INTP', value: 'INTP' },
+  { label: 'ENTJ', value: 'ENTJ' },
+  { label: 'ENTP', value: 'ENTP' },
+  { label: 'INFJ', value: 'INFJ' },
+  { label: 'INFP', value: 'INFP' },
+  { label: 'ENFJ', value: 'ENFJ' },
+  { label: 'ENFP', value: 'ENFP' },
+  { label: 'ISTJ', value: 'ISTJ' },
+  { label: 'ISFJ', value: 'ISFJ' },
+  { label: 'ESTJ', value: 'ESTJ' },
+  { label: 'ESFJ', value: 'ESFJ' },
+  { label: 'ISTP', value: 'ISTP' },
+  { label: 'ISFP', value: 'ISFP' },
+  { label: 'ESTP', value: 'ESTP' },
+  { label: 'ESFP', value: 'ESFP' },
+]
+
+function createTagOption(label: string) {
+  return { label, value: label }
+}
+
+const txtState = reactive({
+  files: [] as File[],
   imported: false,
   importedSize: 0,
 })
@@ -69,6 +110,9 @@ const ocrState = reactive({
   preview: '',
 })
 
+// 仅用于展示预览缩略图：需要在移除/切换档案时 revoke，避免内存泄漏
+const ocrPreviewUrls = ref<string[]>([])
+
 const wxTxtFileInputRef = ref<HTMLInputElement | null>(null)
 const ocrFileInputRef = ref<HTMLInputElement | null>(null)
 
@@ -76,11 +120,48 @@ const active = computed(() => archives.value.find((a) => a.id === activeId.value
 
 const themeOverrides = {
   common: {
-    primaryColor: '#ff7fb5',
-    primaryColorHover: '#ff6fb0',
-    primaryColorPressed: '#ff5ca8',
+    primaryColor: '#ff5fb5',
+    primaryColorHover: '#ff4aa7',
+    primaryColorPressed: '#ff2f92',
   },
 } as const
+
+const archiveSearch = ref('')
+const archiveStatus = ref<'all' | 'pending' | 'uploaded' | 'analyzed'>('all')
+const archiveStatusOptions = [
+  { label: '全部', value: 'all' },
+  { label: '待导入', value: 'pending' },
+  { label: '已导入', value: 'uploaded' },
+  { label: '已分析', value: 'analyzed' },
+]
+
+const filteredArchives = computed(() => {
+  const q = archiveSearch.value.trim()
+  const status = archiveStatus.value
+  const list = archives.value.filter((a) => {
+    if (status === 'pending') return !a.has_upload && !a.has_report
+    if (status === 'uploaded') return a.has_upload && !a.has_report
+    if (status === 'analyzed') return a.has_report
+    return true
+  })
+
+  const searched = q
+    ? list.filter((a) => {
+        const name = (a.name || '').toLowerCase()
+        const stage = (a.stage || '').toLowerCase()
+        const scenario = (a.scenario || '').toLowerCase()
+        return name.includes(q.toLowerCase()) || stage.includes(q.toLowerCase()) || scenario.includes(q.toLowerCase())
+      })
+    : list
+
+  // analyzed > uploaded > pending
+  const rank = (a: ArchiveSummary) => (a.has_report ? 3 : a.has_upload ? 1 : 0)
+  return searched.slice().sort((a, b) => {
+    const dr = rank(b) - rank(a)
+    if (dr !== 0) return dr
+    return (b.name || '').localeCompare(a.name || '')
+  })
+})
 
 function badgeFor(a: ArchiveSummary | undefined) {
   if (!a) return { text: '未选择', cls: '' }
@@ -91,6 +172,10 @@ function badgeFor(a: ArchiveSummary | undefined) {
 
 async function refreshArchives() {
   archives.value = await listArchives()
+  localStorage.setItem('dslm_archives_cache_v1', JSON.stringify(archives.value))
+
+  // activeId 优先回显；若不在列表中则回退到第一个
+  if (activeId.value && !archives.value.some((a) => a.id === activeId.value)) activeId.value = ''
   if (!activeId.value && archives.value.length) activeId.value = archives.value[0].id
 }
 
@@ -100,24 +185,53 @@ async function refreshDetail() {
     return
   }
   detail.value = await getArchiveDetail(activeId.value)
-  fileState.imported = Boolean(detail.value.archive.has_upload)
-  fileState.importedSize = 0
+  txtState.imported = Boolean(detail.value.archive.has_upload)
+  txtState.importedSize = 0
   // 切换档案时清掉“上一档案”的输入/预览统计，避免误导
+  txtState.files = []
   pasteState.importedSize = 0
+
+  // revoke 上一次 OCR 预览 URL
+  for (const u of ocrPreviewUrls.value) URL.revokeObjectURL(u)
+  ocrPreviewUrls.value = []
+
+  ocrState.files = []
   ocrState.importedSize = 0
   ocrState.preview = ''
 }
 
 function onWxTxtPicked(e: Event) {
   const files = (e.target as HTMLInputElement).files
-  fileState.file = files?.[0] || null
-  fileState.imported = false
-  fileState.importedSize = 0
+  txtState.files = files ? [files[0]].filter(Boolean) : []
+  txtState.imported = false
+  txtState.importedSize = 0
 }
 
 function onOcrPicked(e: Event) {
   const files = (e.target as HTMLInputElement).files
-  ocrState.files = Array.from(files || [])
+  for (const u of ocrPreviewUrls.value) URL.revokeObjectURL(u)
+  ocrPreviewUrls.value = []
+
+  const selected = Array.from(files || [])
+  ocrState.files = selected
+  ocrPreviewUrls.value = selected.map((f) => URL.createObjectURL(f))
+
+  ocrState.importedSize = 0
+  ocrState.preview = ''
+}
+
+function removeTxtAt(idx: number) {
+  txtState.files.splice(idx, 1)
+  txtState.imported = false
+  txtState.importedSize = 0
+}
+
+function removeOcrAt(idx: number) {
+  const u = ocrPreviewUrls.value[idx]
+  if (u) URL.revokeObjectURL(u)
+  ocrPreviewUrls.value.splice(idx, 1)
+  ocrState.files.splice(idx, 1)
+
   ocrState.importedSize = 0
   ocrState.preview = ''
 }
@@ -148,16 +262,16 @@ async function onCreateArchive() {
 
 async function onImportWxTxt() {
   if (!activeId.value) return
-  if (!fileState.file) {
+  if (!txtState.files.length) {
     error.value = '请先选择 txt 文件'
     return
   }
   error.value = null
   loading.value = true
   try {
-    const res = await importWxTxt(activeId.value, fileState.file)
-    fileState.imported = true
-    fileState.importedSize = Number(res.normalized_size || 0)
+    const res = await importWxTxt(activeId.value, txtState.files[0])
+    txtState.imported = true
+    txtState.importedSize = Number(res.normalized_size || 0)
     await refreshDetail()
   } catch (e: any) {
     error.value = e?.message || String(e)
@@ -179,9 +293,9 @@ async function onImportPaste() {
       text: pasteState.text,
       filename: 'paste.txt',
     })
-    fileState.imported = true
-    fileState.importedSize = Number(res.normalized_size || 0)
-    pasteState.importedSize = fileState.importedSize
+    txtState.imported = true
+    txtState.importedSize = Number(res.normalized_size || 0)
+    pasteState.importedSize = txtState.importedSize
     await refreshDetail()
   } catch (e: any) {
     error.value = e?.message || String(e)
@@ -235,6 +349,17 @@ async function onAnalyze() {
 
 onMounted(async () => {
   try {
+    const cached = localStorage.getItem('dslm_archives_cache_v1')
+    if (cached) {
+      try {
+        archives.value = JSON.parse(cached) as ArchiveSummary[]
+      } catch {
+        // ignore cache parse errors
+      }
+    }
+    const savedId = localStorage.getItem('dslm_active_id_v1')
+    if (savedId) activeId.value = savedId
+
     await refreshArchives()
     await refreshDetail()
   } catch (e: any) {
@@ -243,10 +368,18 @@ onMounted(async () => {
 })
 
 const badge = computed(() => badgeFor(active.value))
+
+watch(
+  () => activeId.value,
+  (id) => {
+    if (id) localStorage.setItem('dslm_active_id_v1', id)
+  }
+)
 </script>
 
 <template>
   <n-config-provider :theme-overrides="themeOverrides">
+    <SakuraScene />
     <div class="container">
       <h1>她爱你嘛 · 管理页</h1>
       <div class="muted">
@@ -264,8 +397,17 @@ const badge = computed(() => badgeFor(active.value))
             点击切换档案。未分析则先导入再分析。
           </div>
 
-          <div
-            v-for="a in archives"
+          <n-input v-model:value="archiveSearch" placeholder="搜索档案（名称/阶段/场景）" style="width: 100%; margin-bottom: 10px" />
+          <n-select
+            v-model:value="archiveStatus"
+            :options="archiveStatusOptions"
+            placeholder="状态筛选"
+            style="width: 100%; margin-bottom: 10px"
+          />
+
+          <div class="archiveListScroll">
+            <div
+            v-for="a in filteredArchives"
             :key="a.id"
             class="archiveItem"
             :class="{ archiveItemActive: a.id === activeId }"
@@ -283,6 +425,7 @@ const badge = computed(() => badgeFor(active.value))
             </div>
             <div class="badge" :class="badgeFor(a).cls">
               {{ badgeFor(a).text }}
+            </div>
             </div>
           </div>
 
@@ -304,10 +447,28 @@ const badge = computed(() => badgeFor(active.value))
           />
 
           <label>自愿标签：星座（可选，不必生日）</label>
-          <n-input v-model:value="form.zodiac" placeholder="例如：双子座" style="width: 100%" />
+          <n-select
+            v-model:value="form.zodiac"
+            :options="zodiacOptions"
+            placeholder="例如：双子座"
+            style="width: 100%"
+            clearable
+            filterable
+            tag
+            :onCreate="createTagOption"
+          />
 
           <label>自愿标签：MBTI（可选）</label>
-          <n-input v-model:value="form.mbti" placeholder="例如：ENFP" style="width: 100%" />
+          <n-select
+            v-model:value="form.mbti"
+            :options="mbtiOptions"
+            placeholder="例如：ENFP"
+            style="width: 100%"
+            clearable
+            filterable
+            tag
+            :onCreate="createTagOption"
+          />
 
           <div style="height: 10px"></div>
           <n-button :disabled="loading" type="primary" :loading="loading" style="width: 100%" @click="onCreateArchive">
@@ -334,22 +495,20 @@ const badge = computed(() => badgeFor(active.value))
               >
                 选择 txt
               </n-button>
-              <n-button
-                type="primary"
-                :disabled="loading || !fileState.file"
-                :loading="loading"
-                @click="onImportWxTxt"
-              >
+              <n-button type="primary" :disabled="loading || !txtState.files.length" :loading="loading" @click="onImportWxTxt">
                 上传并归一化
               </n-button>
             </div>
 
-            <div class="muted" v-if="fileState.file" style="font-size: 12px; margin-top: 10px">
-              已选择：{{ fileState.file.name }}
+            <div class="uploadFileList" v-if="txtState.files.length">
+              <div v-for="(f, idx) in txtState.files" :key="f.name + ':' + idx" class="uploadFileRow">
+                <div class="uploadFileName">{{ f.name }}</div>
+                <n-button type="error" :disabled="loading" @click="removeTxtAt(idx)">移除</n-button>
+              </div>
             </div>
 
-            <div class="muted" v-if="fileState.imported" style="font-size: 12px; margin-top: 10px">
-              已导入（归一化字符数：{{ fileState.importedSize || 'ok' }}）
+            <div class="muted" v-if="txtState.imported" style="font-size: 12px; margin-top: 10px">
+              已导入（归一化字符数：{{ txtState.importedSize || 'ok' }}）
             </div>
 
             <div style="height: 16px"></div>
@@ -377,6 +536,20 @@ const badge = computed(() => badgeFor(active.value))
 
             <div class="muted" v-if="ocrState.files.length" style="font-size: 12px; margin-top: 10px">
               已选择：{{ ocrState.files.length }} 张截图
+            </div>
+
+            <div class="uploadThumbGrid" v-if="ocrPreviewUrls.length">
+              <div v-for="(url, idx) in ocrPreviewUrls" :key="url" class="uploadThumbItem">
+                <img :src="url" class="uploadThumbImg" alt="ocr-preview" />
+                <div class="uploadThumbFooter">
+                  <div class="uploadThumbName" :title="ocrState.files[idx]?.name || ''">
+                    {{ ocrState.files[idx]?.name || '截图' }}
+                  </div>
+                  <n-button type="error" size="tiny" :disabled="loading" @click="removeOcrAt(idx)">
+                    移除
+                  </n-button>
+                </div>
+              </div>
             </div>
 
             <div class="muted" v-if="ocrState.importedSize" style="font-size: 12px; margin-top: 10px">

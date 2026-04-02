@@ -1,13 +1,13 @@
 :root {
   /* 樱花晨光治愈系配色（浅、柔、低对比度） */
-  --bg: #fff7fb;
-  --card: rgba(255, 255, 255, 0.92);
+  --bg: #ffeaf5;
+  --card: rgba(255, 255, 255, 0.95);
   --text: #24182a;
-  --muted: rgba(36, 24, 42, 0.62);
-  --primary: #ff7fb5;
-  --primary2: #ffc1da;
-  --border: rgba(36, 24, 42, 0.12);
-  --accent: #a98bff;
+  --muted: rgba(36, 24, 42, 0.70);
+  --primary: #ff5fb5;
+  --primary2: #ffd1e6;
+  --border: rgba(36, 24, 42, 0.16);
+  --accent: #8a6cff;
 }
 
 * {
@@ -19,11 +19,40 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
     'Apple Color Emoji', 'Segoe UI Emoji';
   background:
-    radial-gradient(900px 480px at 15% 5%, rgba(255, 127, 181, 0.22), transparent),
-    radial-gradient(900px 520px at 85% 15%, rgba(169, 139, 255, 0.16), transparent),
-    radial-gradient(800px 480px at 55% 100%, rgba(255, 193, 218, 0.26), transparent),
+    radial-gradient(900px 480px at 15% 5%, rgba(255, 95, 181, 0.35), transparent),
+    radial-gradient(900px 520px at 85% 15%, rgba(138, 108, 255, 0.24), transparent),
+    radial-gradient(800px 480px at 55% 100%, rgba(255, 209, 230, 0.34), transparent),
     var(--bg);
   color: var(--text);
+  /* 提高整体饱和度，让樱花更“有力量” */
+  filter: saturate(1.18);
+}
+
+.sakura-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.sakura-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.sakura-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* 让页面内容盖在樱花动画之上 */
+.container {
+  position: relative;
+  z-index: 1;
 }
 
 a {
@@ -195,6 +224,76 @@ textarea {
 .archiveItemActive {
   border-color: rgba(106, 124, 255, 0.55);
   background: rgba(106, 124, 255, 0.08);
+}
+
+.archiveListScroll {
+  max-height: 460px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.uploadFileList {
+  margin-top: 10px;
+}
+
+.uploadFileRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.55);
+  margin-bottom: 8px;
+}
+
+.uploadFileName {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 520px;
+}
+
+.uploadThumbGrid {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+
+.uploadThumbItem {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.55);
+  overflow: hidden;
+}
+
+.uploadThumbImg {
+  width: 100%;
+  height: 110px;
+  object-fit: cover;
+  display: block;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.uploadThumbFooter {
+  padding: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.uploadThumbName {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 110px;
 }
 
 .badge {
