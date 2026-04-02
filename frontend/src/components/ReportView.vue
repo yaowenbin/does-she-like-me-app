@@ -20,8 +20,10 @@ function sanitizeHtml(html: string) {
 }
 
 function renderMarkdown(md: string) {
-  const html = marked.parse(md || '', { mangle: false, headerIds: false })
-  return sanitizeHtml(html)
+  // `marked` 的类型在不同版本下会对返回值进行联合（string | Promise<string>）。
+  // 这里我们只走同步渲染：若类型不确定，直接做兜底转 string。
+  const html = marked.parse(md || '') as unknown
+  return sanitizeHtml(typeof html === 'string' ? html : String(html))
 }
 
 function extractEvidenceQuotes(text: string): string[] {

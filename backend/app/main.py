@@ -12,6 +12,7 @@ from .llm_client import create_llm_client
 from .models import AnalyzeRequest, AnalyzeResult, CreateArchiveRequest, PasteImportRequest
 from .parser import normalize_wx_txt
 from .prompt_builder import build_system_and_user_prompts
+from .ocr import ocr_image_bytes
 
 
 def get_data_dir() -> Path:
@@ -135,6 +136,64 @@ async def import_paste(
     }
 
 
+@app.post("/api/archives/{archive_id}/import/ocr")
+async def import_ocr(
+    archive_id: str,
+    files: list[UploadFile] = File(...),
+    lang: str = "chi_sim",
+) -> dict:
+    """
+    上传你自己本地的聊天截图（合规用途：自用验证/备份），对图片内文字做 OCR 提取，
+    再走同一条 normalize_wx_txt -> 分析链路。
+    """
+    a = db.get_archive(archive_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="archive not found")
+
+    if not files:
+        raise HTTPException(status_code=400, detail="no files uploaded")
+
+    ocr_texts: list[str] = []
+    used_langs: set[str] = set()
+
+    for f in files:
+        filename = (f.filename or "").lower()
+        if not filename.endswith((".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")):
+            # allow but warn implicitly by skipping OCR for unknown types
+            continue
+
+        image_bytes = await f.read()
+        if not image_bytes:
+            continue
+
+        text, used_lang = ocr_image_bytes(image_bytes, lang=lang)
+        if text.strip():
+            ocr_texts.append(text)
+        used_langs.add(used_lang)
+
+    if not ocr_texts:
+        raise HTTPException(status_code=400, detail="OCR 结果为空：请确认图片清晰、无倾斜、文字可识别。")
+
+    combined = "\n".join(ocr_texts)
+    normalized = normalize_wx_txt(combined)
+
+    dest = uploads_dir / f"{archive_id}.ocr.txt"
+    dest.write_text(normalized, encoding="utf-8", newline="\n")
+
+    filename = "ocr.txt"
+    db.save_upload(archive_id, filename=filename, content_path=dest)
+
+    preview = normalized[:3000]
+    return {
+        "archive_id": archive_id,
+        "filename": filename,
+        "ocr_chars": len(combined),
+        "used_langs": sorted(list(used_langs)),
+        "normalized_size": len(normalized),
+        "ocr_preview": preview,
+    }
+
+
 @app.post("/api/archives/{archive_id}/analyze", response_model=AnalyzeResult)
 def analyze_archive(
     archive_id: str,
@@ -145,7 +204,7 @@ def analyze_archive(
         raise HTTPException(status_code=404, detail="archive not found")
     upload_path = db.get_upload_path(archive_id)
     if not upload_path or not upload_path.is_file():
-        raise HTTPException(status_code=400, detail="missing imported wx-txt")
+        raise HTTPException(status_code=400, detail="missing imported content (wx-txt / paste / ocr)")
 
     normalized_chat_text = upload_path.read_text(encoding="utf-8", errors="replace")
     system_prompt, user_prompt = build_system_and_user_prompts(

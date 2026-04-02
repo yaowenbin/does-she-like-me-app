@@ -2,9 +2,9 @@
   "compilerOptions": {
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "resolveJsonModule": true,
+    "module": "System",
+    "moduleResolution": "Node",
+    "resolveJsonModule": false,
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "preserve",

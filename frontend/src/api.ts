@@ -94,6 +94,31 @@ export async function importPaste(
   })
 }
 
+export async function importOcr(
+  archiveId: string,
+  files: File[],
+  input?: { lang?: string }
+): Promise<any> {
+  if (!files || files.length === 0) {
+    throw new Error('请先选择截图图片')
+  }
+  const form = new FormData()
+  for (const f of files) form.append('files', f)
+
+  const lang = input?.lang?.trim()
+  const qs = lang ? `?lang=${encodeURIComponent(lang)}` : ''
+
+  const res = await fetch(url(`/api/archives/${archiveId}/import/ocr${qs}`), {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`)
+  }
+  return await res.json()
+}
+
 export async function analyzeArchive(
   archiveId: string,
   input: { temperature: number }

@@ -6,4 +6,6 @@ python-dotenv
 openai
 python-multipart
 httpx
+pillow
+pytesseract
 

@@ -37,20 +37,6 @@ a {
   padding: 22px;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 14px;
-}
-
-.card {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 14px;
-  backdrop-filter: blur(10px);
-}
-
 h1 {
   font-size: 18px;
   margin: 0 0 12px;
@@ -70,7 +56,6 @@ label {
   margin: 10px 0 6px;
 }
 
-input,
 textarea {
   width: 100%;
   border: 1px solid var(--border);
@@ -78,9 +63,6 @@ textarea {
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.75);
   color: var(--text);
-}
-
-textarea {
   min-height: 220px;
   resize: vertical;
   white-space: pre-wrap;
@@ -89,15 +71,21 @@ textarea {
   font-size: 12px;
 }
 
-button {
-  border: 0;
-  border-radius: 12px;
-  padding: 10px 14px;
-  cursor: pointer;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary2) 100%);
-  color: white;
-  font-weight: 700;
+.grid {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 14px;
 }
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 14px;
+  backdrop-filter: blur(10px);
+}
+
+/* UI 组件由 Naive UI 统一接管，避免全局 input/textarea/button 样式打架 */
 
 /* 报告气泡章节（番剧字幕风） */
 .bubbleWrap {
@@ -179,11 +167,6 @@ button {
   margin-bottom: 8px;
   font-size: 14px;
   font-weight: 900;
-}
-
-button:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
 }
 
 .row {
