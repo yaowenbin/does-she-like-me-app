@@ -1,0 +1,9 @@
+{
+  "name": "她爱你嘛 · 治愈报告",
+  "short_name": "她爱你嘛",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf8f5",
+  "theme_color": "#c4a574",
+  "lang": "zh-CN"
+}

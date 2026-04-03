@@ -85,3 +85,50 @@ class WechatSceneResponse(BaseModel):
     short_code: str
     hint: str
 
+
+class AdminGiftCodeRow(BaseModel):
+    code: str
+    credits: int
+    # unused | used | expired | revoked
+    status: str
+    created_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    revoked_at: Optional[str] = None
+    used_by_device: Optional[str] = None
+    used_at: Optional[str] = None
+
+
+class AdminGiftCodeCreateItem(BaseModel):
+    code: str
+    credits: int = 1
+
+
+class AdminGiftCodeGenerate(BaseModel):
+    count: int = Field(ge=1, le=5000)
+    credits: int = Field(ge=1, default=1)
+    expires_in_days: int = Field(default=7, ge=1, le=365)
+    prefix: str = Field(default="", max_length=16)
+
+
+class AdminGiftCodeBatchCreate(BaseModel):
+    """手工导入与随机批量可同时进行。手工条目使用 manual_expires_in_days 计算过期时间。"""
+
+    items: Optional[List[AdminGiftCodeCreateItem]] = None
+    generate: Optional[AdminGiftCodeGenerate] = None
+    manual_expires_in_days: int = Field(default=7, ge=1, le=365)
+
+
+class AdminGiftCodeBatchCreateResult(BaseModel):
+    created: int
+    skipped_invalid: int
+    # 随机生成时返回明文（每行一条卡密，便于首次分发后从列表回收）
+    generated_plaintext: Optional[str] = None
+
+
+class AdminGiftCodeRevokeBody(BaseModel):
+    codes: List[str]
+
+
+class AdminGiftCodeRevokeResult(BaseModel):
+    revoked: int
+

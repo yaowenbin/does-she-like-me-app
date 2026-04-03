@@ -1,8 +1,12 @@
 <script setup lang="ts">
+import axios from 'axios'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import type { FormInst, FormRules } from 'naive-ui'
 import {
   NButton,
   NConfigProvider,
+  NForm,
+  NFormItem,
   NInput,
   NInputNumber,
   NSwitch,
@@ -27,8 +31,10 @@ import {
   type ArchiveSummary,
   type EntitlementsMe,
 } from './api'
+import AdminPanel from './components/AdminPanel.vue'
 import ReportView from './components/ReportView.vue'
 import SakuraScene from './components/SakuraScene.vue'
+import { toast } from './http'
 
 const loading = ref(false)
 /** 仅「生成报告」阶段的整页温馨 loading */
@@ -43,7 +49,8 @@ const entitlements = ref<EntitlementsMe | null>(null)
 const analyzeFeatures = ref<AnalyzeFeatures | null>(null)
 /** 深度推理失败但已保存基础稿时的提示 */
 const analysisWarn = ref<string | null>(null)
-const redeemCodeInput = ref('')
+const redeemForm = reactive({ code: '' })
+const redeemFormRef = ref<FormInst | null>(null)
 const wechatShortCode = ref('')
 const pdfExporting = ref(false)
 
@@ -78,6 +85,13 @@ function stopWarmMessages() {
 
 const uiBusy = computed(() => loading.value || reportGenerating.value)
 
+/** 运营后台：URL hash 为 #/admin */
+const adminRoute = ref(false)
+function syncAdminHash() {
+  const raw = window.location.hash.replace(/^#\/?/, '').split(/[?#]/)[0]
+  adminRoute.value = raw === 'admin'
+}
+
 const archives = ref<ArchiveSummary[]>([])
 const activeId = ref<string>('')
 const detail = ref<Awaited<ReturnType<typeof getArchiveDetail>> | null>(null)
@@ -94,7 +108,6 @@ const form = reactive({
 })
 
 const stageOptions = [
-  { label: '不填', value: '' },
   { label: '初识', value: '初识' },
   { label: '暧昧', value: '暧昧' },
   { label: '已表白', value: '已表白' },
@@ -103,7 +116,6 @@ const stageOptions = [
 ]
 
 const scenarioOptions = [
-  { label: '不填', value: '' },
   { label: '私聊', value: '私聊' },
   { label: '群聊', value: '群聊' },
   { label: '工作软件', value: '工作软件' },
@@ -173,6 +185,43 @@ const ocrPreviewUrls = ref<string[]>([])
 const wxTxtFileInputRef = ref<HTMLInputElement | null>(null)
 const ocrFileInputRef = ref<HTMLInputElement | null>(null)
 
+const archiveFormRef = ref<FormInst | null>(null)
+const pasteFormRef = ref<FormInst | null>(null)
+
+const archiveFormRules: FormRules = {
+  name: [
+    {
+      validator: (_r, v: string) => {
+        if (!v || !String(v).trim()) return new Error('请填写档案名称')
+        if (String(v).trim().length > 80) return new Error('名称请控制在 80 字以内')
+        return true
+      },
+      trigger: ['input', 'blur'],
+    },
+  ],
+  stage: [{ required: true, type: 'string', message: '请选择关系阶段', trigger: ['change', 'blur'] }],
+  scenario: [{ required: true, type: 'string', message: '请选择聊天场景', trigger: ['change', 'blur'] }],
+}
+
+const redeemFormRules: FormRules = {
+  code: [
+    { required: true, message: '请输入卡密', trigger: ['input', 'blur'] },
+    { min: 4, message: '卡密至少 4 位', trigger: ['input', 'blur'] },
+  ],
+}
+
+const pasteRules: FormRules = {
+  text: [
+    {
+      validator: (_r, v: string) => {
+        if (!v || !String(v).trim()) return new Error('请粘贴聊天内容')
+        return true
+      },
+      trigger: ['input', 'blur'],
+    },
+  ],
+}
+
 const active = computed(() => archives.value.find((a) => a.id === activeId.value))
 
 const themeOverrides = {
@@ -228,12 +277,16 @@ function badgeFor(a: ArchiveSummary | undefined) {
 }
 
 async function refreshArchives() {
-  archives.value = await listArchives()
-  localStorage.setItem('dslm_archives_cache_v1', JSON.stringify(archives.value))
-
-  // activeId 优先回显；若不在列表中则回退到第一个
-  if (activeId.value && !archives.value.some((a) => a.id === activeId.value)) activeId.value = ''
-  if (!activeId.value && archives.value.length) activeId.value = archives.value[0].id
+  try {
+    archives.value = await listArchives()
+    localStorage.setItem('dslm_archives_cache_v1', JSON.stringify(archives.value))
+    if (activeId.value && !archives.value.some((a) => a.id === activeId.value)) activeId.value = ''
+    if (!activeId.value && archives.value.length) activeId.value = archives.value[0].id
+  } catch (e) {
+    if (!axios.isAxiosError(e)) throw e
+    archives.value = []
+    activeId.value = ''
+  }
 }
 
 async function refreshDetail() {
@@ -241,7 +294,16 @@ async function refreshDetail() {
     detail.value = null
     return
   }
-  detail.value = await getArchiveDetail(activeId.value)
+  try {
+    detail.value = await getArchiveDetail(activeId.value)
+  } catch (e) {
+    if (axios.isAxiosError(e)) {
+      detail.value = null
+      return
+    }
+    throw e
+  }
+  if (!detail.value) return
   txtState.imported = Boolean(detail.value.archive.has_upload)
   txtState.importedSize = 0
   // 切换档案时清掉“上一档案”的输入/预览统计，避免误导
@@ -294,6 +356,12 @@ function removeOcrAt(idx: number) {
 }
 
 async function onCreateArchive() {
+  try {
+    await archiveFormRef.value?.validate()
+  } catch {
+    return
+  }
+  if (!canMutateWithCredits.value) return
   error.value = null
   loading.value = true
   try {
@@ -310,8 +378,9 @@ async function onCreateArchive() {
     await refreshArchives()
     activeId.value = res.id
     await refreshDetail()
+    toast.success('档案已创建')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     loading.value = false
   }
@@ -319,6 +388,7 @@ async function onCreateArchive() {
 
 async function onImportWxTxt() {
   if (!activeId.value) return
+  if (!canMutateWithCredits.value) return
   if (!txtState.files.length) {
     error.value = '请先选择 txt 文件'
     return
@@ -331,8 +401,9 @@ async function onImportWxTxt() {
     txtState.importedSize = Number(res.normalized_size || 0)
     importMode.value = 'txt'
     await refreshDetail()
+    toast.success('TXT 已导入')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     loading.value = false
   }
@@ -340,8 +411,10 @@ async function onImportWxTxt() {
 
 async function onImportPaste() {
   if (!activeId.value) return
-  if (!pasteState.text.trim()) {
-    error.value = '请先粘贴聊天内容（可以是 OCR 后的文字）'
+  if (!canMutateWithCredits.value) return
+  try {
+    await pasteFormRef.value?.validate()
+  } catch {
     return
   }
   error.value = null
@@ -356,8 +429,9 @@ async function onImportPaste() {
     pasteState.importedSize = txtState.importedSize
     importMode.value = 'paste'
     await refreshDetail()
+    toast.success('粘贴内容已导入')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     loading.value = false
   }
@@ -365,6 +439,7 @@ async function onImportPaste() {
 
 async function onImportOcr() {
   if (!activeId.value) return
+  if (!canMutateWithCredits.value) return
   if (!ocrState.files || ocrState.files.length === 0) {
     error.value = '请先选择聊天截图图片'
     return
@@ -375,11 +450,11 @@ async function onImportOcr() {
     const res = await importOcr(activeId.value, ocrState.files, { lang: 'chi_sim' })
     ocrState.importedSize = Number(res.normalized_size || 0)
     ocrState.preview = String(res.ocr_preview || '')
-    // OCR 导入成功后，后端会写入 uploaded 内容，因此分析按钮应可用
     await refreshDetail()
     importMode.value = 'ocr'
+    toast.success('截图 OCR 已完成')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     loading.value = false
   }
@@ -414,8 +489,9 @@ async function onAnalyze() {
     }
     reportFullscreen.value = true
     await refreshEntitlements()
+    toast.success('报告已生成')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     stopWarmMessages()
     loading.value = false
@@ -446,8 +522,9 @@ async function exportReportPdf() {
     a.click()
     a.remove()
     URL.revokeObjectURL(u)
+    toast.success('PDF 已开始下载')
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   } finally {
     pdfExporting.value = false
   }
@@ -477,23 +554,30 @@ async function refreshEntitlements() {
 }
 
 async function onRedeemCode() {
-  error.value = null
-  if (!redeemCodeInput.value.trim()) {
-    error.value = '请输入卡密'
+  try {
+    await redeemFormRef.value?.validate()
+  } catch {
     return
   }
+  error.value = null
   try {
-    await redeemGiftCode(redeemCodeInput.value.trim())
-    redeemCodeInput.value = ''
+    await redeemGiftCode(redeemForm.code.trim())
+    redeemForm.code = ''
+    toast.success('兑换成功')
     await refreshEntitlements()
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   }
 }
 
-onUnmounted(() => stopWarmMessages())
+onUnmounted(() => {
+  window.removeEventListener('hashchange', syncAdminHash)
+  stopWarmMessages()
+})
 
 onMounted(async () => {
+  syncAdminHash()
+  window.addEventListener('hashchange', syncAdminHash)
   try {
     const cached = localStorage.getItem('dslm_archives_cache_v1')
     if (cached) {
@@ -510,7 +594,7 @@ onMounted(async () => {
     await refreshDetail()
     await refreshEntitlements()
   } catch (e: any) {
-    error.value = e?.message || String(e)
+    if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
   }
   await refreshAnalyzeFeatures()
 })
@@ -543,6 +627,13 @@ const canAnalyze = computed(() => {
   return true
 })
 
+/** 与后端一致：开启扣次时，新建档案与导入材料需至少 1 次额度 */
+const canMutateWithCredits = computed(() => {
+  const e = entitlements.value
+  if (!e?.entitlements_enforced) return true
+  return e.credits >= 1
+})
+
 watch(
   () => activeId.value,
   (id) => {
@@ -557,6 +648,9 @@ watch(reportFullscreen, (v) => {
 
 <template>
   <n-config-provider :theme-overrides="themeOverrides">
+    <AdminPanel v-if="adminRoute" @exit="syncAdminHash" />
+
+    <template v-if="!adminRoute">
     <SakuraScene v-show="!reportFullscreen" />
 
     <Teleport to="body">
@@ -592,6 +686,9 @@ watch(reportFullscreen, (v) => {
         </div>
         <div class="muted" style="margin-top: 10px">
           提醒：请仅上传你有权使用的材料；不要用于骚扰或操控。
+        </div>
+        <div class="muted tiny" style="margin-top: 8px">
+          <a href="#/admin" class="footerAdminLink">卡密运营后台（需管理密钥）</a>
         </div>
       </div>
 
@@ -636,67 +733,58 @@ watch(reportFullscreen, (v) => {
 
           <div style="height: 10px"></div>
           <h2>新建档案</h2>
+          <div class="muted tiny" style="margin-bottom: 8px">名称、关系阶段、聊天场景为必填；标签可空。</div>
 
-          <div class="formRow">
-            <label>名称（可选）</label>
-            <div class="formControl">
-              <n-input v-model:value="form.name" placeholder="例如：2024 暧昧期" style="width: 100%" />
-            </div>
-          </div>
-
-          <div class="formRow">
-            <label>关系阶段（可选）</label>
-            <div class="formControl">
-              <n-select v-model:value="form.stage" :options="stageOptions" placeholder="请选择" style="width: 100%" />
-            </div>
-          </div>
-
-          <div class="formRow">
-            <label>聊天场景（可选）</label>
-            <div class="formControl">
-              <n-select
-                v-model:value="form.scenario"
-                :options="scenarioOptions"
-                placeholder="请选择"
-                style="width: 100%"
-              />
-            </div>
-          </div>
-
-          <div class="formRow">
-            <label>自愿标签：星座</label>
-            <div class="formControl">
+          <n-form
+            ref="archiveFormRef"
+            :model="form"
+            :rules="archiveFormRules"
+            label-placement="left"
+            label-width="96"
+            require-mark-placement="right-hanging"
+            size="small"
+          >
+            <n-form-item path="name" label="档案名称">
+              <n-input v-model:value="form.name" placeholder="例如：2024 暧昧期" />
+            </n-form-item>
+            <n-form-item path="stage" label="关系阶段">
+              <n-select v-model:value="form.stage" :options="stageOptions" placeholder="请选择" />
+            </n-form-item>
+            <n-form-item path="scenario" label="聊天场景">
+              <n-select v-model:value="form.scenario" :options="scenarioOptions" placeholder="请选择" />
+            </n-form-item>
+            <n-form-item label="星座（可选）">
               <n-select
                 v-model:value="form.zodiac"
                 :options="zodiacOptions"
                 placeholder="例如：双子座"
-                style="width: 100%"
                 clearable
                 filterable
                 tag
                 :onCreate="createTagOption"
               />
-            </div>
-          </div>
-
-          <div class="formRow">
-            <label>自愿标签：MBTI</label>
-            <div class="formControl">
+            </n-form-item>
+            <n-form-item label="MBTI（可选）">
               <n-select
                 v-model:value="form.mbti"
                 :options="mbtiOptions"
                 placeholder="例如：ENFP"
-                style="width: 100%"
                 clearable
                 filterable
                 tag
                 :onCreate="createTagOption"
               />
-            </div>
-          </div>
+            </n-form-item>
+          </n-form>
 
           <div style="height: 10px"></div>
-          <n-button :disabled="uiBusy" type="primary" :loading="loading && !reportGenerating" style="width: 100%" @click="onCreateArchive">
+          <n-button
+            :disabled="uiBusy || !canMutateWithCredits"
+            type="primary"
+            :loading="loading && !reportGenerating"
+            style="width: 100%"
+            @click="onCreateArchive"
+          >
             新建档案
           </n-button>
         </div>
@@ -714,17 +802,19 @@ watch(reportFullscreen, (v) => {
               >
               <span v-else class="muted tiny">当前为开放联调（未强制扣次）</span>
             </div>
-            <div class="entitlementsRow entitlementsActions">
-              <n-input
-                v-model:value="redeemCodeInput"
-                size="small"
-                placeholder="输入卡密，兑换次数"
-                style="flex: 1; min-width: 120px; max-width: 220px"
-                @keydown.enter.prevent="onRedeemCode"
-              />
-              <n-button size="small" type="primary" :disabled="uiBusy" @click="onRedeemCode">
-                兑换
-              </n-button>
+            <n-form ref="redeemFormRef" :model="redeemForm" :rules="redeemFormRules" class="entitlementsRedeemForm">
+              <div class="entitlementsRow entitlementsActions">
+                <n-form-item path="code" :show-label="false" style="flex: 1; min-width: 120px; max-width: 220px; margin-bottom: 0">
+                  <n-input
+                    v-model:value="redeemForm.code"
+                    size="small"
+                    placeholder="输入卡密，兑换次数"
+                    @keydown.enter.prevent="onRedeemCode"
+                  />
+                </n-form-item>
+                <n-button size="small" type="primary" :disabled="uiBusy" style="margin-bottom: 0" @click="onRedeemCode">
+                  兑换
+                </n-button>
               <a
                 v-if="wechatMpProfileUrl"
                 class="oaLink"
@@ -734,6 +824,10 @@ watch(reportFullscreen, (v) => {
               >
                 关注公众号
               </a>
+              </div>
+            </n-form>
+            <div v-if="entitlements.entitlements_enforced && !canMutateWithCredits" class="creditBlockHint">
+              次数不足：无法新建档案或导入聊天材料；请先兑换卡密或关注公众号领取（与生成报告共用额度）。
             </div>
             <div v-if="entitlements.entitlements_enforced && wechatShortCode" class="muted tiny sceneHint">
               公众平台创建<strong>带参二维码</strong>时，scene 填写：
@@ -759,7 +853,7 @@ watch(reportFullscreen, (v) => {
                       <n-button type="default" :disabled="uiBusy" @click="wxTxtFileInputRef?.click()">选择 txt</n-button>
                       <n-button
                         type="primary"
-                        :disabled="uiBusy || !txtState.files.length"
+                        :disabled="uiBusy || !txtState.files.length || !canMutateWithCredits"
                         :loading="loading && !reportGenerating"
                         @click="onImportWxTxt"
                       >
@@ -793,7 +887,7 @@ watch(reportFullscreen, (v) => {
                       <n-button type="default" :disabled="uiBusy" @click="ocrFileInputRef?.click()">选择截图</n-button>
                       <n-button
                         type="primary"
-                        :disabled="uiBusy || ocrState.files.length === 0"
+                        :disabled="uiBusy || ocrState.files.length === 0 || !canMutateWithCredits"
                         :loading="loading && !reportGenerating"
                         @click="onImportOcr"
                       >
@@ -835,17 +929,20 @@ watch(reportFullscreen, (v) => {
 
                 <n-tab-pane name="paste" tab="粘贴">
                   <div class="importPanel">
-                    <label>如果无法导出：直接粘贴聊天文本（支持 Tencent 无导出情况）</label>
-                    <textarea
-                      v-model="pasteState.text"
-                      class="importTextarea"
-                      placeholder="把聊天内容粘贴进来即可。若你拿到的是截图转文字（OCR），也可以直接贴。"
-                    />
+                    <n-form ref="pasteFormRef" :model="pasteState" :rules="pasteRules">
+                      <n-form-item path="text" label="聊天文本">
+                        <textarea
+                          v-model="pasteState.text"
+                          class="importTextarea"
+                          placeholder="把聊天内容粘贴进来即可。若你拿到的是截图转文字（OCR），也可以直接贴。"
+                        />
+                      </n-form-item>
+                    </n-form>
 
                     <div class="row" style="margin-top: 10px">
                       <n-button
                         type="primary"
-                        :disabled="uiBusy || !pasteState.text.trim()"
+                        :disabled="uiBusy || !pasteState.text.trim() || !canMutateWithCredits"
                         :loading="loading && !reportGenerating"
                         @click="onImportPaste"
                       >
@@ -950,6 +1047,27 @@ watch(reportFullscreen, (v) => {
         </div>
       </div>
     </Teleport>
+    </template>
   </n-config-provider>
 </template>
+
+<style scoped>
+.footerAdminLink {
+  color: #c2185b;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.creditBlockHint {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8b2942;
+  background: rgba(240, 98, 146, 0.12);
+}
+.entitlementsRedeemForm :deep(.n-form-item-feedback-wrapper) {
+  min-height: 0;
+}
+</style>
 

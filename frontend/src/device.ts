@@ -1,5 +1,6 @@
 const DEVICE_KEY = 'dslm_device_id_v1'
 
+/** 供 HTTP 客户端注入 X-Device-Id */
 export function getOrCreateDeviceId(): string {
   let id = localStorage.getItem(DEVICE_KEY)
   if (!id) {

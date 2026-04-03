@@ -1,3 +1,6 @@
+import axios from 'axios'
+import { http, toast } from './http'
+
 export type ArchiveSummary = {
   id: string
   name: string
@@ -19,50 +22,9 @@ export type ArchiveDetail = {
   }
 }
 
-import { deviceHeaders } from './device'
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL?.toString().replace(/\/$/, '') || ''
-
-function url(path: string) {
-  const p = path.startsWith('/') ? path : `/${path}`
-  return API_BASE ? `${API_BASE}${p}` : p
-}
-
-function formatHttpErrorBody(text: string): string {
-  try {
-    const j = JSON.parse(text) as { detail?: unknown }
-    if (j?.detail != null) {
-      return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
-    }
-  } catch {
-    /* 非 JSON */
-  }
-  return text
-}
-
-async function jsonFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const method = (init.method || 'GET').toUpperCase()
-  const headers: Record<string, string> = {
-    ...deviceHeaders(),
-    ...(init.headers as Record<string, string> | undefined),
-  }
-  if (method !== 'GET' && method !== 'HEAD') {
-    headers['Content-Type'] = headers['Content-Type'] || 'application/json'
-  }
-  const res = await fetch(url(path), {
-    ...init,
-    headers,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    const detail = formatHttpErrorBody(text)
-    throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`)
-  }
-  return (await res.json()) as T
-}
-
 export async function listArchives(): Promise<ArchiveSummary[]> {
-  return jsonFetch('/api/archives')
+  const { data } = await http.get<ArchiveSummary[]>('/api/archives')
+  return data
 }
 
 export async function createArchive(input: {
@@ -71,48 +33,36 @@ export async function createArchive(input: {
   scenario?: string
   tags?: Record<string, any>
 }): Promise<{ id: string }> {
-  return jsonFetch('/api/archives', {
-    method: 'POST',
-    body: JSON.stringify({
-      name: input.name || '',
-      stage: input.stage || '',
-      scenario: input.scenario || '',
-      tags: input.tags || {},
-    }),
+  const { data } = await http.post<{ id: string }>('/api/archives', {
+    name: input.name || '',
+    stage: input.stage || '',
+    scenario: input.scenario || '',
+    tags: input.tags || {},
   })
+  return data
 }
 
 export async function getArchiveDetail(archiveId: string): Promise<ArchiveDetail> {
-  return jsonFetch(`/api/archives/${archiveId}`)
+  const { data } = await http.get<ArchiveDetail>(`/api/archives/${archiveId}`)
+  return data
 }
 
 export async function importWxTxt(archiveId: string, file: File): Promise<any> {
   const form = new FormData()
   form.append('file', file)
-
-  const res = await fetch(url(`/api/archives/${archiveId}/import/wx-txt`), {
-    method: 'POST',
-    headers: deviceHeaders(),
-    body: form,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`)
-  }
-  return await res.json()
+  const { data } = await http.post(`/api/archives/${archiveId}/import/wx-txt`, form)
+  return data
 }
 
 export async function importPaste(
   archiveId: string,
   input: { text: string; filename?: string }
 ): Promise<any> {
-  return jsonFetch(`/api/archives/${archiveId}/import/paste`, {
-    method: 'POST',
-    body: JSON.stringify({
-      text: input.text,
-      filename: input.filename || '',
-    }),
+  const { data } = await http.post(`/api/archives/${archiveId}/import/paste`, {
+    text: input.text,
+    filename: input.filename || '',
   })
+  return data
 }
 
 export async function importOcr(
@@ -121,24 +71,15 @@ export async function importOcr(
   input?: { lang?: string }
 ): Promise<any> {
   if (!files || files.length === 0) {
-    throw new Error('请先选择截图图片')
+    toast.warning('请先选择截图图片')
+    throw new Error('no files')
   }
   const form = new FormData()
   for (const f of files) form.append('files', f)
-
   const lang = input?.lang?.trim()
   const qs = lang ? `?lang=${encodeURIComponent(lang)}` : ''
-
-  const res = await fetch(url(`/api/archives/${archiveId}/import/ocr${qs}`), {
-    method: 'POST',
-    headers: deviceHeaders(),
-    body: form,
-  })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`)
-  }
-  return await res.json()
+  const { data } = await http.post(`/api/archives/${archiveId}/import/ocr${qs}`, form)
+  return data
 }
 
 export type AnalyzeFeatures = {
@@ -171,20 +112,21 @@ export type AnalyzeResultDto = {
 }
 
 export async function getAnalyzeFeatures(): Promise<AnalyzeFeatures> {
-  return jsonFetch('/api/config/analyze')
+  const { data } = await http.get<AnalyzeFeatures>('/api/config/analyze', {
+    skipGlobalErrorMessage: true,
+  })
+  return data
 }
 
 export async function analyzeArchive(
   archiveId: string,
   input: { temperature: number; deep_reasoning?: boolean }
 ): Promise<AnalyzeResultDto> {
-  return jsonFetch(`/api/archives/${archiveId}/analyze`, {
-    method: 'POST',
-    body: JSON.stringify({
-      temperature: input.temperature,
-      deep_reasoning: Boolean(input.deep_reasoning),
-    }),
+  const { data } = await http.post<AnalyzeResultDto>(`/api/archives/${archiveId}/analyze`, {
+    temperature: input.temperature,
+    deep_reasoning: Boolean(input.deep_reasoning),
   })
+  return data
 }
 
 export type EntitlementsMe = {
@@ -195,28 +137,76 @@ export type EntitlementsMe = {
 }
 
 export async function getEntitlementsMe(): Promise<EntitlementsMe> {
-  return jsonFetch('/api/entitlements/me')
+  const { data } = await http.get<EntitlementsMe>('/api/entitlements/me', {
+    skipGlobalErrorMessage: true,
+  })
+  return data
 }
 
 export async function redeemGiftCode(code: string): Promise<{ ok: boolean; added: number; credits: number }> {
-  return jsonFetch('/api/entitlements/redeem', {
-    method: 'POST',
-    body: JSON.stringify({ code }),
-  })
+  const { data } = await http.post<{ ok: boolean; added: number; credits: number }>(
+    '/api/entitlements/redeem',
+    { code }
+  )
+  return data
 }
 
 export async function getWechatScene(): Promise<{ short_code: string; hint: string }> {
-  return jsonFetch('/api/entitlements/wechat-scene')
+  const { data } = await http.get<{ short_code: string; hint: string }>('/api/entitlements/wechat-scene', {
+    skipGlobalErrorMessage: true,
+  })
+  return data
 }
 
 export async function downloadReportPdf(archiveId: string): Promise<Blob> {
-  const res = await fetch(url(`/api/archives/${archiveId}/export/pdf`), {
-    headers: deviceHeaders(),
+  const { data } = await http.get(`/api/archives/${archiveId}/export/pdf`, {
+    responseType: 'blob',
   })
-  if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${formatHttpErrorBody(text) || res.statusText}`)
-  }
-  return await res.blob()
+  return data as Blob
 }
 
+/** —— 运营后台（Bearer = sessionStorage dslm_admin_token）—— */
+
+export type GiftCodeStatus = 'unused' | 'used' | 'expired' | 'revoked'
+
+export type AdminGiftCodeRow = {
+  code: string
+  credits: number
+  status: GiftCodeStatus
+  created_at: string | null
+  expires_at: string | null
+  revoked_at: string | null
+  used_by_device: string | null
+  used_at: string | null
+}
+
+export async function adminListGiftCodes(): Promise<AdminGiftCodeRow[]> {
+  const { data } = await http.get<AdminGiftCodeRow[]>('/api/admin/gift-codes')
+  return data
+}
+
+export type AdminCreateGiftCodesBody = {
+  items?: { code: string; credits: number }[]
+  generate?: { count: number; credits: number; expires_in_days: number; prefix?: string }
+  manual_expires_in_days?: number
+}
+
+export type AdminCreateGiftCodesResult = {
+  created: number
+  skipped_invalid: number
+  generated_plaintext: string | null
+}
+
+export async function adminCreateGiftCodes(body: AdminCreateGiftCodesBody): Promise<AdminCreateGiftCodesResult> {
+  const { data } = await http.post<AdminCreateGiftCodesResult>('/api/admin/gift-codes', body)
+  return data
+}
+
+export async function adminRevokeGiftCodes(codes: string[]): Promise<{ revoked: number }> {
+  const { data } = await http.post<{ revoked: number }>('/api/admin/gift-codes/revoke', { codes })
+  return data
+}
+
+export function isAxiosCanceled(e: unknown): boolean {
+  return axios.isAxiosError(e) && e.code === 'ERR_CANCELED'
+}

@@ -68,6 +68,7 @@ def main() -> int:
     archive_id = "chain-smoke"
     db.create_archive(
         archive_id,
+        device_id="chain-smoke-device",
         name="chain-smoke",
         stage="na",
         scenario="na",

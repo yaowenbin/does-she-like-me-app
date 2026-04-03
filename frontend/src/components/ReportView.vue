@@ -28,12 +28,23 @@ function sanitizeHtml(html: string) {
 function renderMarkdown(md: string) {
   // `marked` 的类型在不同版本下会对返回值进行联合（string | Promise<string>）。
   // 这里我们只走同步渲染：若类型不确定，直接做兜底转 string。
-  const html = marked.parse(md || '') as unknown
+  // UI 层不展示内部编码 “· Lx”，避免用户看到 L1~L6 觉得是内部术语。
+  const cleaned = (md || '').replace(/【([^】]*?)\s*·\s*L[1-6]\s*】/g, '【$1】')
+  const html = marked.parse(cleaned) as unknown
   return sanitizeHtml(typeof html === 'string' ? html : String(html))
 }
 
-function extractEvidenceQuotes(text: string): string[] {
+type EvidenceQuote = { quote: string; desc: string }
+function extractEvidenceQuotes(text: string): EvidenceQuote[] {
   if (!text) return []
+
+  // 优先抓“有一句话说明”的证据： （证据：<desc>：「quote」）
+  const patternsWithDesc: RegExp[] = [
+    /（证据[^）]*?：\s*([^「]+?)「([^」]+)」）/g,
+    /（证据[^）]*?：\s*([^『]+?)『([^』]+)』）/g,
+  ]
+
+  // 退化抓“只有引文”的证据： （证据：「quote」）
   const patterns: RegExp[] = [
     /（证据[^）]*?「([^」]+)」）/g,
     /（证据[^）]*?『([^』]+)』）/g,
@@ -42,20 +53,38 @@ function extractEvidenceQuotes(text: string): string[] {
     /（证据[^）]*?([^）]+)）/g,
   ]
 
-  const out: string[] = []
-  for (const p of patterns) {
+  const out: EvidenceQuote[] = []
+  const seenQuote = new Set<string>()
+
+  for (const p of patternsWithDesc) {
     for (const m of text.matchAll(p)) {
-      const q = m[1]?.trim()
-      if (q && q.length <= 180) out.push(q)
+      const desc = (m[1] || '').trim()
+      const quote = (m[2] || '').trim()
+      if (!quote || quote.length > 180) continue
+      if (seenQuote.has(quote)) continue
+      seenQuote.add(quote)
+      out.push({ quote, desc })
     }
   }
-  // 去重
-  return Array.from(new Set(out))
+
+  for (const p of patterns) {
+    for (const m of text.matchAll(p)) {
+      const quote = (m[1] || '').trim()
+      if (!quote || quote.length > 180) continue
+      if (seenQuote.has(quote)) continue
+      seenQuote.add(quote)
+      out.push({ quote, desc: '' })
+    }
+  }
+
+  return out
 }
 
 function parseLensSections(md: string): LensSection[] {
-  const out: LensSection[] = []
-  if (!md) return out
+  const byId = new Map<LensSection['lensId'], LensSection>()
+  const order: LensSection['lensId'][] = []
+  if (!md) return []
+  // 防止同一透镜的多个小节标题（例如 L6 专业整合/人话要点）被当成多个“章节卡片”
 
   const re = /【([^】]*?·\s*L[1-6])】/g
   const matches = Array.from(md.matchAll(re))
@@ -71,9 +100,16 @@ function parseLensSections(md: string): LensSection[] {
     const slice = md.slice(start, end).trim()
     // Remove leading `【...】`
     const content = slice.replace(/^【[^】]*?】/, '').trim()
-    out.push({ lensTag: lensTag.trim(), lensId: lensId as any, content })
+    if (!byId.has(lensId as any)) {
+      byId.set(lensId as any, { lensTag: lensTag.trim(), lensId: lensId as any, content })
+      order.push(lensId as any)
+    } else {
+      // 同一透镜的多个分段合并显示
+      const prev = byId.get(lensId as any)
+      if (prev) prev.content = `${prev.content}\n\n${content}`.trim()
+    }
   }
-  return out
+  return order.map((id) => byId.get(id)!).filter(Boolean)
 }
 
 function getBlockAfterHeading(md: string, heading: string) {
@@ -85,7 +121,7 @@ function getBlockAfterHeading(md: string, heading: string) {
   return (next >= 0 ? rest.slice(0, next) : rest).trim()
 }
 
-type BehaviorRow = { dimension: string; score: number | null; raw: string }
+type BehaviorRow = { dimension: string; score: number | null; evidence: string; alt: string; raw: string }
 
 function parseBehaviorTable(md: string): BehaviorRow[] {
   const block = getBlockAfterHeading(md, '行为层量表')
@@ -97,19 +133,25 @@ function parseBehaviorTable(md: string): BehaviorRow[] {
     if (!t.startsWith('|')) continue
     if (t.includes('---')) continue
     // Try: | dim | score | evidence | alt |
-    const parts = t.split('|').map((x) => x.trim()).filter(Boolean)
-    if (parts.length < 3) continue
-    const dimension = parts[0]
-    const scoreRaw = parts[1]
+    const partsAll = t.split('|').map((x) => x.trim())
+    if (partsAll[0] === '') partsAll.shift()
+    if (partsAll.length && partsAll[partsAll.length - 1] === '') partsAll.pop()
+    if (partsAll.length < 2) continue
+
+    const dimension = partsAll[0]
+    const scoreRaw = partsAll[1]
+    const evidence = partsAll[2] || ''
+    const alt = partsAll.slice(3).join(' | ')
     if (!dimension) continue
 
     let score: number | null = null
     if (scoreRaw === 'nc') score = null
     else {
       const n = Number(scoreRaw)
-      score = Number.isFinite(n) ? n : null
+      if (!Number.isFinite(n)) continue
+      score = n
     }
-    rows.push({ dimension, score, raw: line })
+    rows.push({ dimension, score, evidence, alt, raw: line })
   }
   return rows
 }
@@ -174,6 +216,30 @@ const shownBehaviorRows = computed(() => {
   const list = extracted.value.behaviorRows
   return behaviorExpanded.value ? list : list.slice(0, 6)
 })
+
+const lensIdToFriendlyName: Record<LensSection['lensId'], string> = {
+  L1: '心理视角',
+  L2: '成本与互惠视角',
+  L3: '话术模板视角',
+  L4: '故事角色视角',
+  L5: '文化对照视角（可选）',
+  L6: '四层可得性（现实走到一起的难易）',
+}
+
+function cleanLensTag(tag: string): string {
+  // 删除尾部 “· Lx”，避免用户看到 L1-L6 这样的内部编码
+  return (tag || '').replace(/\s*·\s*L[1-6]\s*$/g, '').trim()
+}
+
+function scoreToHuman(score: number | null): string {
+  if (score === null) return 'nc（证据不足）'
+  const n = score
+  if (n <= 1) return '很弱'
+  if (n === 2) return '偏弱'
+  if (n === 3) return '中等'
+  if (n === 4) return '偏强'
+  return '很强'
+}
 
 const behaviorRadar = computed(() => {
   const rows = extracted.value.behaviorRows
@@ -399,7 +465,7 @@ onBeforeUnmount(() => {
           <div class="heartbeatGaugeFill" :style="{ width: heartbeatBarPct + '%' }"></div>
         </div>
         <div v-if="heartbeatMeta.low != null && heartbeatMeta.high != null" class="heartbeatRangeText">
-          区间约 {{ heartbeatMeta.low }}–{{ heartbeatMeta.high }}（越高越偏「心动信号」一侧，仍非精确预测）
+          心动区间约 {{ heartbeatMeta.low }}–{{ heartbeatMeta.high }}
         </div>
         <div v-if="heartbeatMeta.oneLine" class="heartbeatOneLine">{{ heartbeatMeta.oneLine }}</div>
         <div
@@ -413,7 +479,7 @@ onBeforeUnmount(() => {
     <div class="healNotice">
       <div class="bubbleHeader">
         <div class="bubbleTag">自我关爱提醒</div>
-        <div class="badge">治愈模式 · 档案级分析</div>
+        <div class="badge">档案分析</div>
       </div>
       <div class="muted">
         目的不是让你痛苦，也不是替你做判决。
@@ -437,7 +503,7 @@ onBeforeUnmount(() => {
           <div class="reportCardNo">R2</div>
           <div class="sectionTitle">透镜证据密度</div>
           <div class="chartBox chartBox--radar chartBox--radarHero" ref="lensRadarRef"></div>
-          <div class="muted chartHint">L1–L6 启发式密度，非科学量化。</div>
+          <div class="muted chartHint">多透镜证据密度（启发式），非科学量化。</div>
         </article>
       </div>
 
@@ -462,7 +528,7 @@ onBeforeUnmount(() => {
           class="reportMasonryItem reportProCol reportProCol--narrative"
         >
           <div class="reportCardNo">{{ String(idx + 2).padStart(2, '0') }}</div>
-          <div class="sectionTitle">章节（{{ s.lensId }}）</div>
+          <div class="sectionTitle">{{ lensIdToFriendlyName[s.lensId] }}</div>
           <div class="bubbleText">
             <div
               style="
@@ -474,12 +540,12 @@ onBeforeUnmount(() => {
                 flex-wrap: wrap;
               "
             >
-              <div class="bubbleTag">{{ s.lensTag }}</div>
+              <div class="bubbleTag">{{ cleanLensTag(s.lensTag) }}</div>
               <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
             </div>
             <details class="lensDetails" :open="idx === 0 || !shouldCollapseLens(s.content)">
               <summary v-if="shouldCollapseLens(s.content)" class="lensDetailsSummary">
-                <span>展开完整章节</span>
+                <span>展开内容</span>
               </summary>
               <div
                 v-if="shouldCollapseLens(s.content)"
@@ -496,9 +562,10 @@ onBeforeUnmount(() => {
           <div class="sectionTitle">证据卡片</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-if="extracted.evidence.length === 0" class="muted">未在报告中找到可展示的证据引文。</div>
-            <div v-for="q in shownEvidence" :key="q" class="evidenceItem">
-              <div class="small">摘录（用于复核，不做判决）</div>
-              <div>{{ q }}</div>
+            <div v-for="q in shownEvidence" :key="q.quote" class="evidenceItem">
+              <div class="small">摘录</div>
+              <div v-if="q.desc" class="muted" style="margin-top: 4px">{{ q.desc }}</div>
+              <div style="margin-top: 6px">{{ q.quote }}</div>
             </div>
             <button
               v-if="extracted.evidence.length > 6"
@@ -513,14 +580,13 @@ onBeforeUnmount(() => {
 
         <article class="reportMasonryItem reportProCol reportProCol--evidence">
           <div class="reportCardNo">E2</div>
-          <div class="sectionTitle">行为层量表（可复核）</div>
+          <div class="sectionTitle">行为层量表</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-if="extracted.behaviorRows.length === 0" class="muted">报告中未解析到行为层量表。</div>
             <div v-for="r in shownBehaviorRows" :key="r.dimension" class="evidenceItem">
               <div class="small">{{ r.dimension }}</div>
-              <div style="font-weight: 900">
-                {{ r.score === null ? 'nc' : r.score }}
-              </div>
+              <div style="font-weight: 900; margin-top: 4px">{{ scoreToHuman(r.score) }}</div>
+              <div v-if="r.alt" class="muted" style="margin-top: 6px">{{ r.alt }}</div>
             </div>
             <button
               v-if="extracted.behaviorRows.length > 6"

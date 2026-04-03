@@ -21,6 +21,8 @@ class ArchiveRow:
     tags_json: str
     created_at: str
     updated_at: str
+    # 归属设备：仅该 X-Device-Id 可访问（与旧数据 NULL 隔离，旧档对任何设备均不可见）
+    device_id: Optional[str] = None
 
     @property
     def tags(self) -> Dict[str, Any]:
@@ -56,6 +58,7 @@ class Database:
                 )
                 """
             )
+            self._migrate_archives_device_id(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS uploads (
@@ -101,21 +104,30 @@ class Database:
 
             init_entitlements_schema(self.db_path)
 
+    @staticmethod
+    def _migrate_archives_device_id(conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(archives)").fetchall()
+        cols = {r[1] for r in rows}
+        if "device_id" not in cols:
+            conn.execute("ALTER TABLE archives ADD COLUMN device_id TEXT")
+
     def create_archive(
         self,
         archive_id: str,
         *,
+        device_id: str,
         name: str,
         stage: str,
         scenario: str,
         tags: Dict[str, Any],
     ) -> None:
         now = utc_now_iso()
+        did = (device_id or "").strip()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO archives (id, name, stage, scenario, tags_json, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO archives (id, name, stage, scenario, tags_json, created_at, updated_at, device_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     archive_id,
@@ -125,6 +137,7 @@ class Database:
                     json.dumps(tags or {}, ensure_ascii=False),
                     now,
                     now,
+                    did or None,
                 ),
             )
 
@@ -140,7 +153,7 @@ class Database:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, name, stage, scenario, tags_json, created_at, updated_at
+                SELECT id, name, stage, scenario, tags_json, created_at, updated_at, device_id
                 FROM archives
                 WHERE id = ?
                 """,
@@ -156,9 +169,11 @@ class Database:
                 tags_json=row["tags_json"],
                 created_at=row["created_at"],
                 updated_at=row["updated_at"],
+                device_id=row["device_id"],
             )
 
-    def list_archives(self) -> List[Dict[str, Any]]:
+    def list_archives(self, *, device_id: str) -> List[Dict[str, Any]]:
+        did = (device_id or "").strip()
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -168,8 +183,10 @@ class Database:
                 FROM archives a
                 LEFT JOIN uploads u ON u.archive_id = a.id
                 LEFT JOIN reports r ON r.archive_id = a.id
+                WHERE a.device_id = ?
                 ORDER BY a.updated_at DESC
-                """
+                """,
+                (did,),
             ).fetchall()
             out: List[Dict[str, Any]] = []
             for row in rows:

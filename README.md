@@ -50,7 +50,7 @@ npm i
 npm run dev
 ```
 
-前端默认把 `/api` 转发到 `http://127.0.0.1:${VITE_BACKEND_PORT}`；不设则为 `8000`。
+前端默认把 `/api` 转发到 `http://127.0.0.1:${VITE_BACKEND_PORT}`；不设则为 `8000`。接口层使用 **axios** 单例（`src/http.ts`）：统一注入 `X-Device-Id`、响应拦截里用 Naive UI **全局 Message** 提示错误（402 为警告样式）。
 
 可选：`frontend/.env` 中设置 `VITE_WECHAT_MP_URL=https://mp.weixin.qq.com/...` 显示「关注公众号」外链。
 
@@ -71,11 +71,16 @@ npm run dev
 - 前端通过请求头 **`X-Device-Id`**（本地 `localStorage` UUID）标识设备；**不建账号体系**也可按设备扣次。
 - **`ENTITLEMENTS_ENFORCE=1`**：每次「生成报告」至少消耗 **1** 次；若开启深度推理，消耗 **`1 + DEEP_REASON_EXTRA_CREDITS`**；次数不足返回 HTTP 402。
 - **`INITIAL_DEVICE_CREDITS`**：新设备默认赠送次数（生产可设 `0`；联调可设 `99`）。
-- **卡密表 `gift_codes`**：在 SQLite 中插入 `code` + `credits`，用户在前端兑换后增加次数（一次性使用）。
+- **卡密表 `gift_codes`**：用户在前端兑换后增加次数（一次性使用）。除手工 SQL 外，可在前端打开 **`#/admin` 卡密运营后台**（需先在服务端配置 **`ADMIN_API_TOKEN`**，并在后台页输入同一密钥；密钥仅存于浏览器 `sessionStorage`）。
 
 ```sql
 INSERT INTO gift_codes (code, credits) VALUES ('你的卡密', 5);
 ```
+
+- **`ADMIN_API_TOKEN`**：与请求头 `Authorization: Bearer <token>` 比对；未配置时管理接口不可用（HTTP 503）。请勿把 Token 写进前端仓库或明文发给不可信方；生产环境务必走 **HTTPS**。
+- **卡密字段与规则**：每条卡密有 **创建时间**、**过期时间**（随机/手工入库默认 7 天，可配 1～365 天）、**状态**（未使用 / 已兑换 / 已过期 / 已废除）。兑换接口会拒绝 **已废除**、**已过期** 的卡密。运营后台支持 **高熵随机批量生成**、**手工列表导入**、**勾选废除**（仅未兑换生效，用于泄漏止损）、**CSV 导出**（含 BOM，便于 Excel）。接口：`POST /api/admin/gift-codes`（body 支持 `generate` / `items`）、`POST /api/admin/gift-codes/revoke`。
+- **档案隔离**：每个浏览器实例有独立 `X-Device-Id`（`localStorage`）；列表与操作仅能看到本设备档案。
+- **扣次与导入**：`ENTITLEMENTS_ENFORCE=1` 时，**新建档案**与**三种导入**与生成报告共用额度，剩余次数 `< 1` 时无法建档/导入（HTTP 402）；前端会同步禁用对应按钮。
 
 - **公众号带参二维码**：`GET /api/entitlements/wechat-scene` 返回 `short_code`。在微信公众平台创建二维码时 **scene** 填该字符串；用户扫码关注后，微信服务器 `POST /api/wechat/callback`，服务端给对应设备增加 **`OA_FOLLOW_BONUS_CREDITS`（默认 1）**，且 **`oa_follow_bonus_claimed`** 保证每设备仅一次。
 - 需配置 **`WECHAT_MP_TOKEN`**（与公众平台「基本配置」Token 一致），并将服务器 URL 设为 `https://你的域名/api/wechat/callback`。
