@@ -35,12 +35,14 @@ from .models import (
     AdminGiftCodeRevokeResult,
     AdminGiftCodeRow,
     AnalyzeFeaturesResponse,
+    AnalyzePlanResponse,
     AnalyzeRequest,
     AnalyzeResult,
     CreateArchiveRequest,
     EntitlementsMeResponse,
     PasteImportRequest,
     RedeemRequest,
+    TraceStepModel,
     UsageStepModel,
     WechatSceneResponse,
 )
@@ -92,6 +94,28 @@ def _deep_reason_extra_credits() -> int:
 
 def _wechat_token() -> str:
     return os.getenv("WECHAT_MP_TOKEN", "").strip()
+
+
+def _normalize_temperature(raw: float) -> float:
+    v = float(raw)
+    if v < 0:
+        return 0.0
+    if v > 1.5:
+        return 1.5
+    return v
+
+
+def _analyze_charge(*, deep_reasoning: bool) -> tuple[int, int]:
+    extra_dr = _deep_reason_extra_credits() if deep_reasoning else 0
+    return (1 + extra_dr if deep_reasoning else 1), extra_dr
+
+
+def _refund_credits_if_needed(device_id: str, amount: int) -> None:
+    if amount <= 0:
+        return
+    with db._connect() as conn:
+        refund_credits(conn, device_id, amount)
+        conn.commit()
 
 
 def _require_x_device_id(x_device_id: str | None) -> str:
@@ -216,6 +240,42 @@ def analyze_features() -> AnalyzeFeaturesResponse:
         deep_reason_extra_credits=_deep_reason_extra_credits(),
         reasoner_model=default_reasoner_model(),
         entitlements_enforced=_entitlements_enforce(),
+    )
+
+
+@app.get("/api/archives/{archive_id}/analyze/plan", response_model=AnalyzePlanResponse)
+def analyze_plan(
+    archive_id: str,
+    deep_reasoning: bool = False,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> AnalyzePlanResponse:
+    did = _require_x_device_id(x_device_id)
+    a = _archive_belonging_to_device(db, archive_id, did)
+    upload_path = db.get_upload_path(archive_id)
+    required, extra = _analyze_charge(deep_reasoning=bool(deep_reasoning))
+    blockers: list[str] = []
+    if not upload_path or not upload_path.is_file():
+        blockers.append("请先导入聊天材料（txt / 粘贴 / OCR）")
+    if _entitlements_enforce():
+        with db._connect() as conn:
+            row = ensure_device(conn, did, initial_credits=_initial_device_credits())
+            conn.commit()
+        if int(row["credits"]) < required:
+            blockers.append(f"分析次数不足：当前 {int(row['credits'])}，需要 {required}")
+    if not (a.stage or "").strip():
+        blockers.append("建议补充关系阶段，以提升判断稳定性")
+    if not (a.scenario or "").strip():
+        blockers.append("建议补充聊天场景，以提升判断稳定性")
+    return AnalyzePlanResponse(
+        archive_id=archive_id,
+        can_analyze=not any(b.startswith("请先导入") or b.startswith("分析次数不足") for b in blockers),
+        blockers=blockers,
+        required_credits=required,
+        deep_reason_extra_credits=extra,
+        deep_reasoning_enabled=bool(deep_reasoning),
+        has_upload=bool(upload_path and upload_path.is_file()),
+        has_report=db.get_report(archive_id) is not None,
+        pipeline_steps=["build", "base", "reasoner" if deep_reasoning else "finalize", "persist"],
     )
 
 
@@ -537,9 +597,7 @@ def analyze_archive(
     upload_path = db.get_upload_path(archive_id)
     if not upload_path or not upload_path.is_file():
         raise HTTPException(status_code=400, detail="missing imported content (wx-txt / paste / ocr)")
-
-    extra_dr = _deep_reason_extra_credits() if req.deep_reasoning else 0
-    charge = 1 + extra_dr if req.deep_reasoning else 1
+    charge, extra_dr = _analyze_charge(deep_reasoning=bool(req.deep_reasoning))
     charge_applied = 0
 
     if _entitlements_enforce():
@@ -570,6 +628,7 @@ def analyze_archive(
 
     normalized_chat_text = upload_path.read_text(encoding="utf-8", errors="replace")
     run_id = uuid.uuid4().hex
+    temperature = _normalize_temperature(req.temperature)
 
     try:
         out = run_report_pipeline(
@@ -581,36 +640,26 @@ def analyze_archive(
             scenario=a.scenario,
             tags=a.tags,
             normalized_chat_text=normalized_chat_text,
-            temperature=float(req.temperature),
+            temperature=temperature,
             deep_reasoning=bool(req.deep_reasoning),
         )
     except RuntimeError as e:
-        if charge_applied:
-            with db._connect() as conn:
-                refund_credits(conn, did, charge_applied)
-                conn.commit()
+        _refund_credits_if_needed(did, charge_applied)
         raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
-        if charge_applied:
-            with db._connect() as conn:
-                refund_credits(conn, did, charge_applied)
-                conn.commit()
+        _refund_credits_if_needed(did, charge_applied)
         raise HTTPException(status_code=500, detail=f"pipeline failed: {e}") from e
 
     if _entitlements_enforce() and req.deep_reasoning and out.reasoner_failed and extra_dr > 0:
-        with db._connect() as conn:
-            refund_credits(conn, did, extra_dr)
-            conn.commit()
+        _refund_credits_if_needed(did, extra_dr)
 
     if not out.final_report.strip():
-        if charge_applied:
-            with db._connect() as conn:
-                refund_credits(conn, did, charge_applied)
-                conn.commit()
+        _refund_credits_if_needed(did, charge_applied)
         raise HTTPException(status_code=500, detail="empty report from pipeline")
 
     db.save_report(archive_id, model=out.model_label, report_markdown=out.final_report)
     usage_models = [UsageStepModel(**s) for s in out.usage_steps]
+    trace_models = [TraceStepModel(**s) for s in out.execution_trace]
     return AnalyzeResult(
         archive_id=archive_id,
         model=out.model_label,
@@ -621,5 +670,5 @@ def analyze_archive(
         reasoner_failed=out.reasoner_failed,
         reasoner_error=out.reasoner_error,
         usage_steps=usage_models,
+        execution_trace=trace_models,
     )
-

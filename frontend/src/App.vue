@@ -18,6 +18,7 @@ import {
   analyzeArchive,
   createArchive,
   downloadReportPdf,
+  getAnalyzePlan,
   getAnalyzeFeatures,
   getArchiveDetail,
   getEntitlementsMe,
@@ -27,8 +28,10 @@ import {
   importOcr,
   listArchives,
   redeemGiftCode,
+  type AnalyzePlan,
   type AnalyzeFeatures,
   type ArchiveSummary,
+  type AnalyzeResultDto,
   type EntitlementsMe,
 } from './api'
 import AdminPanel from './components/AdminPanel.vue'
@@ -49,6 +52,8 @@ const entitlements = ref<EntitlementsMe | null>(null)
 const analyzeFeatures = ref<AnalyzeFeatures | null>(null)
 /** 深度推理失败但已保存基础稿时的提示 */
 const analysisWarn = ref<string | null>(null)
+const analysisTrace = ref<Array<{ step: string; status: string; model?: string | null; error?: string | null }>>([])
+const analyzePlan = ref<AnalyzePlan | null>(null)
 const redeemForm = reactive({ code: '' })
 const redeemFormRef = ref<FormInst | null>(null)
 const wechatShortCode = ref('')
@@ -292,6 +297,7 @@ async function refreshArchives() {
 async function refreshDetail() {
   if (!activeId.value) {
     detail.value = null
+    analysisTrace.value = []
     return
   }
   try {
@@ -317,6 +323,8 @@ async function refreshDetail() {
   ocrState.files = []
   ocrState.importedSize = 0
   ocrState.preview = ''
+  analysisTrace.value = []
+  await refreshAnalyzePlan()
 }
 
 function onWxTxtPicked(e: Event) {
@@ -468,7 +476,7 @@ async function onAnalyze() {
   reportGenerating.value = true
   startWarmMessages()
   try {
-    const res = await analyzeArchive(activeId.value, {
+    const res: AnalyzeResultDto = await analyzeArchive(activeId.value, {
       temperature: Number(form.temperature),
       deep_reasoning: form.deepReasoning,
     })
@@ -478,6 +486,7 @@ async function onAnalyze() {
         '深度推理未生效，已保存基础稿；附加次数已退回（若开启扣次）。'
     }
     await refreshDetail()
+    analysisTrace.value = Array.isArray(res.execution_trace) ? res.execution_trace : []
     // detail 会刷新到最新 report
     detail.value = {
       ...(detail.value as any),
@@ -489,6 +498,7 @@ async function onAnalyze() {
     }
     reportFullscreen.value = true
     await refreshEntitlements()
+    await refreshAnalyzePlan()
     toast.success('报告已生成')
   } catch (e: any) {
     if (!axios.isAxiosError(e)) error.value = e?.message || String(e)
@@ -538,6 +548,18 @@ async function refreshAnalyzeFeatures() {
   }
 }
 
+async function refreshAnalyzePlan() {
+  if (!activeId.value) {
+    analyzePlan.value = null
+    return
+  }
+  try {
+    analyzePlan.value = await getAnalyzePlan(activeId.value, form.deepReasoning)
+  } catch {
+    analyzePlan.value = null
+  }
+}
+
 async function refreshEntitlements() {
   try {
     entitlements.value = await getEntitlementsMe()
@@ -548,6 +570,7 @@ async function refreshEntitlements() {
       wechatShortCode.value = ''
     }
     await refreshAnalyzeFeatures()
+    await refreshAnalyzePlan()
   } catch {
     entitlements.value = null
   }
@@ -621,11 +644,25 @@ const creditsNeededForAnalyze = computed(() => {
 
 const canAnalyze = computed(() => {
   if (!detail.value?.archive?.has_upload) return false
+  if (analyzePlan.value && !analyzePlan.value.can_analyze) return false
   if (entitlements.value?.entitlements_enforced) {
     if (entitlements.value.credits < creditsNeededForAnalyze.value) return false
   }
   return true
 })
+
+const pipelineStepLabels: Record<string, string> = {
+  build: '构建提示词',
+  base: '主模型生成',
+  reasoner: '深度推理复核',
+  finalize: '基础稿收束',
+  persist: '报告入库',
+}
+
+const traceStatusLabels: Record<string, string> = {
+  ok: '完成',
+  failed: '失败',
+}
 
 /** 与后端一致：开启扣次时，新建档案与导入材料需至少 1 次额度 */
 const canMutateWithCredits = computed(() => {
@@ -638,6 +675,13 @@ watch(
   () => activeId.value,
   (id) => {
     if (id) localStorage.setItem('dslm_active_id_v1', id)
+  }
+)
+
+watch(
+  () => form.deepReasoning,
+  async () => {
+    await refreshAnalyzePlan()
   }
 )
 
@@ -974,6 +1018,24 @@ watch(reportFullscreen, (v) => {
               </span>
             </div>
 
+            <div v-if="analyzePlan" class="planCard">
+              <div class="planTitle">调度预检</div>
+              <div class="planSteps">
+                <span v-for="s in analyzePlan.pipeline_steps" :key="s" class="planStepChip">
+                  {{ pipelineStepLabels[s] || s }}
+                </span>
+              </div>
+              <div class="muted tiny" style="margin-top: 6px">
+                本次预计消耗：<b>{{ analyzePlan.required_credits }}</b> 次
+                <template v-if="analyzePlan.deep_reasoning_enabled">
+                  （含深度附加 {{ analyzePlan.deep_reason_extra_credits }}）
+                </template>
+              </div>
+              <div v-if="analyzePlan.blockers.length" class="planBlockers">
+                <div v-for="b in analyzePlan.blockers" :key="b" class="planBlockerItem">- {{ b }}</div>
+              </div>
+            </div>
+
             <div style="height: 10px"></div>
             <n-button
               :disabled="uiBusy || !canAnalyze"
@@ -999,6 +1061,18 @@ watch(reportFullscreen, (v) => {
             style="color: #856404; background: rgba(255, 193, 7, 0.12); padding: 10px 12px; border-radius: 10px; margin-top: 12px; font-size: 13px; line-height: 1.5"
           >
             {{ analysisWarn }}
+          </div>
+
+          <div v-if="analysisTrace.length" class="traceCard">
+            <div class="traceTitle">本次调度轨迹</div>
+            <div v-for="(t, idx) in analysisTrace" :key="`${t.step}-${idx}`" class="traceItem">
+              <div>
+                <b>{{ pipelineStepLabels[t.step] || t.step }}</b>
+                <span class="muted tiny" style="margin-left: 8px">{{ traceStatusLabels[t.status] || t.status }}</span>
+                <span v-if="t.model" class="muted tiny" style="margin-left: 8px">{{ t.model }}</span>
+              </div>
+              <div v-if="t.error" class="traceError">{{ t.error }}</div>
+            </div>
           </div>
 
           <div style="height: 14px"></div>
@@ -1069,5 +1143,55 @@ watch(reportFullscreen, (v) => {
 .entitlementsRedeemForm :deep(.n-form-item-feedback-wrapper) {
   min-height: 0;
 }
+.planCard {
+  margin-top: 10px;
+  border: 1px solid rgba(240, 98, 146, 0.24);
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(240, 98, 146, 0.08);
+}
+.planTitle {
+  font-weight: 700;
+  font-size: 13px;
+}
+.planSteps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.planStepChip {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.7);
+}
+.planBlockers {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8b2942;
+}
+.planBlockerItem + .planBlockerItem {
+  margin-top: 4px;
+}
+.traceCard {
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: rgba(33, 150, 243, 0.08);
+}
+.traceTitle {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+.traceItem + .traceItem {
+  margin-top: 8px;
+}
+.traceError {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #9a2b2b;
+  word-break: break-word;
+}
 </style>
-

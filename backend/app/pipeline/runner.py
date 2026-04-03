@@ -14,6 +14,7 @@ class PipelineOutput:
     final_report: str
     model_label: str
     usage_steps: List[Dict[str, Any]]
+    execution_trace: List[Dict[str, Any]]
     pipeline_version: str
     deep_reasoning_requested: bool
     deep_reasoning_used: bool
@@ -54,6 +55,7 @@ def run_report_pipeline(
     }
     out = graph.invoke(init)
     usage_records = list(out.get("usage_records") or [])
+    execution_trace = list(out.get("execution_trace") or [])
     models_used = list(out.get("models_used") or [])
     uniq: list[str] = []
     for m in models_used:
@@ -69,6 +71,7 @@ def run_report_pipeline(
         final_report=(out.get("final_report") or "").strip(),
         model_label=model_label,
         usage_steps=usage_records,
+        execution_trace=execution_trace,
         pipeline_version=pipeline_version,
         deep_reasoning_requested=deep_reasoning,
         deep_reasoning_used=deep_used,

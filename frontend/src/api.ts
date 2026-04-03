@@ -109,6 +109,24 @@ export type AnalyzeResultDto = {
   reasoner_failed?: boolean
   reasoner_error?: string | null
   usage_steps?: UsageStep[]
+  execution_trace?: Array<{
+    step: string
+    status: string
+    model?: string | null
+    error?: string | null
+  }>
+}
+
+export type AnalyzePlan = {
+  archive_id: string
+  can_analyze: boolean
+  blockers: string[]
+  required_credits: number
+  deep_reason_extra_credits: number
+  deep_reasoning_enabled: boolean
+  has_upload: boolean
+  has_report: boolean
+  pipeline_steps: string[]
 }
 
 export async function getAnalyzeFeatures(): Promise<AnalyzeFeatures> {
@@ -125,6 +143,14 @@ export async function analyzeArchive(
   const { data } = await http.post<AnalyzeResultDto>(`/api/archives/${archiveId}/analyze`, {
     temperature: input.temperature,
     deep_reasoning: Boolean(input.deep_reasoning),
+  })
+  return data
+}
+
+export async function getAnalyzePlan(archiveId: string, deepReasoning: boolean): Promise<AnalyzePlan> {
+  const { data } = await http.get<AnalyzePlan>(`/api/archives/${archiveId}/analyze/plan`, {
+    params: { deep_reasoning: deepReasoning },
+    skipGlobalErrorMessage: true,
   })
   return data
 }

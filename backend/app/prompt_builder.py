@@ -1,12 +1,63 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Dict, Tuple
 
 from .skills_bundle import resolve_skill_root
 
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
+
+
+_PROMPT_FILES: tuple[str, ...] = (
+    "prompts/safety_refusal.md",
+    "prompts/analyze_segments.md",
+    "prompts/score_rubric.md",
+    "prompts/lens_evolution.md",
+    "prompts/lens_gene_rhetoric.md",
+    "prompts/lens_psychology.md",
+    "prompts/lens_literature.md",
+    "prompts/lens_astrology.md",
+    "prompts/lens_attainability.md",
+    "prompts/synthesis.md",
+    "reference.md",
+)
+
+_PROMPT_CACHE: dict[str, tuple[Tuple[int, ...], Dict[str, str]]] = {}
+
+
+def _prompt_fingerprint(skill_root: Path) -> Tuple[int, ...]:
+    out: list[int] = []
+    for rel in _PROMPT_FILES:
+        p = skill_root / rel
+        st = p.stat()
+        out.append(st.st_mtime_ns)
+        out.append(st.st_size)
+    return tuple(out)
+
+
+def _load_prompt_bundle(skill_root: Path) -> Dict[str, str]:
+    key = str(skill_root.resolve())
+    fp = _prompt_fingerprint(skill_root)
+    cached = _PROMPT_CACHE.get(key)
+    if cached and cached[0] == fp:
+        return cached[1]
+    bundle = {
+        "safety": _read_text(skill_root / "prompts" / "safety_refusal.md"),
+        "evidence": _read_text(skill_root / "prompts" / "analyze_segments.md"),
+        "rubric": _read_text(skill_root / "prompts" / "score_rubric.md"),
+        "lens_evo": _read_text(skill_root / "prompts" / "lens_evolution.md"),
+        "lens_gene": _read_text(skill_root / "prompts" / "lens_gene_rhetoric.md"),
+        "lens_psy": _read_text(skill_root / "prompts" / "lens_psychology.md"),
+        "lens_lit": _read_text(skill_root / "prompts" / "lens_literature.md"),
+        "lens_ast": _read_text(skill_root / "prompts" / "lens_astrology.md"),
+        "lens_att": _read_text(skill_root / "prompts" / "lens_attainability.md"),
+        "synthesis": _read_text(skill_root / "prompts" / "synthesis.md"),
+        "reference": _read_text(skill_root / "reference.md"),
+    }
+    _PROMPT_CACHE[key] = (fp, bundle)
+    return bundle
 
 
 def build_system_and_user_prompts(
@@ -19,19 +70,18 @@ def build_system_and_user_prompts(
 ) -> tuple[str, str]:
     if skill_root is None:
         skill_root = resolve_skill_root()
-
-    # Load prompt fragments (keep it simple: we rely on the skill templates' wording).
-    safety = _read_text(skill_root / "prompts" / "safety_refusal.md")
-    evidence = _read_text(skill_root / "prompts" / "analyze_segments.md")
-    rubric = _read_text(skill_root / "prompts" / "score_rubric.md")
-    lens_evo = _read_text(skill_root / "prompts" / "lens_evolution.md")
-    lens_gene = _read_text(skill_root / "prompts" / "lens_gene_rhetoric.md")
-    lens_psy = _read_text(skill_root / "prompts" / "lens_psychology.md")
-    lens_lit = _read_text(skill_root / "prompts" / "lens_literature.md")
-    lens_ast = _read_text(skill_root / "prompts" / "lens_astrology.md")
-    lens_att = _read_text(skill_root / "prompts" / "lens_attainability.md")
-    synthesis = _read_text(skill_root / "prompts" / "synthesis.md")
-    reference = _read_text(skill_root / "reference.md")
+    bundle = _load_prompt_bundle(skill_root)
+    safety = bundle["safety"]
+    evidence = bundle["evidence"]
+    rubric = bundle["rubric"]
+    lens_evo = bundle["lens_evo"]
+    lens_gene = bundle["lens_gene"]
+    lens_psy = bundle["lens_psy"]
+    lens_lit = bundle["lens_lit"]
+    lens_ast = bundle["lens_ast"]
+    lens_att = bundle["lens_att"]
+    synthesis = bundle["synthesis"]
+    reference = bundle["reference"]
 
     tags_str = ", ".join([f"{k}={v}" for k, v in (tags or {}).items()]) if tags else ""
 
@@ -83,4 +133,3 @@ def build_system_and_user_prompts(
     )
 
     return system_prompt, user_prompt
-

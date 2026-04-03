@@ -49,6 +49,13 @@ class UsageStepModel(BaseModel):
     prompt_cache_miss_tokens: Optional[int] = None
 
 
+class TraceStepModel(BaseModel):
+    step: str
+    status: str
+    model: Optional[str] = None
+    error: Optional[str] = None
+
+
 class AnalyzeResult(BaseModel):
     archive_id: str
     model: str
@@ -59,6 +66,7 @@ class AnalyzeResult(BaseModel):
     reasoner_failed: bool = False
     reasoner_error: Optional[str] = None
     usage_steps: List[UsageStepModel] = Field(default_factory=list)
+    execution_trace: List[TraceStepModel] = Field(default_factory=list)
 
 
 class AnalyzeFeaturesResponse(BaseModel):
@@ -68,6 +76,18 @@ class AnalyzeFeaturesResponse(BaseModel):
     deep_reason_extra_credits: int
     reasoner_model: str
     entitlements_enforced: bool
+
+
+class AnalyzePlanResponse(BaseModel):
+    archive_id: str
+    can_analyze: bool
+    blockers: List[str] = Field(default_factory=list)
+    required_credits: int = 1
+    deep_reason_extra_credits: int = 1
+    deep_reasoning_enabled: bool = False
+    has_upload: bool = False
+    has_report: bool = False
+    pipeline_steps: List[str] = Field(default_factory=list)
 
 
 class RedeemRequest(BaseModel):
@@ -131,4 +151,3 @@ class AdminGiftCodeRevokeBody(BaseModel):
 
 class AdminGiftCodeRevokeResult(BaseModel):
     revoked: int
-

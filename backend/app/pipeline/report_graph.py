@@ -28,6 +28,7 @@ class ReportGraphState(TypedDict, total=False):
     reasoner_error: str
     usage_records: Annotated[list[dict], operator.add]
     models_used: Annotated[list[str], operator.add]
+    execution_trace: Annotated[list[dict], operator.add]
 
 
 REASONER_SYSTEM = """你是「她爱你嘛」报告的深度审稿与推理增强器。
@@ -56,7 +57,11 @@ def make_report_graph(
             tags=state.get("tags") or {},
             normalized_chat_text=state["normalized_chat_text"],
         )
-        return {"system_prompt": s, "user_prompt": u}
+        return {
+            "system_prompt": s,
+            "user_prompt": u,
+            "execution_trace": [{"step": "build", "status": "ok"}],
+        }
 
     def node_base(state: ReportGraphState) -> dict:
         messages = [
@@ -80,6 +85,7 @@ def make_report_graph(
             "base_report": r.content,
             "usage_records": [rec],
             "models_used": [r.model],
+            "execution_trace": [{"step": "base", "status": "ok", "model": r.model}],
         }
 
     def node_reasoner(state: ReportGraphState) -> dict:
@@ -117,6 +123,7 @@ def make_report_graph(
                 "models_used": [r.model],
                 "reasoner_failed": False,
                 "reasoner_error": "",
+                "execution_trace": [{"step": "reasoner", "status": "ok", "model": r.model}],
             }
         except Exception as e:
             err = str(e)[:800]
@@ -126,10 +133,14 @@ def make_report_graph(
                 "reasoner_error": err,
                 "usage_records": [],
                 "models_used": [],
+                "execution_trace": [{"step": "reasoner", "status": "failed", "error": err}],
             }
 
     def node_finalize(state: ReportGraphState) -> dict:
-        return {"final_report": state.get("base_report") or ""}
+        return {
+            "final_report": state.get("base_report") or "",
+            "execution_trace": [{"step": "finalize", "status": "ok"}],
+        }
 
     def route_after_base(state: ReportGraphState) -> Literal["reasoner", "finalize"]:
         if state.get("deep_reasoning"):
