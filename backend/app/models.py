@@ -40,3 +40,19 @@ class AnalyzeResult(BaseModel):
     model: str
     report_markdown: str
 
+
+class RedeemRequest(BaseModel):
+    code: str = ""
+
+
+class EntitlementsMeResponse(BaseModel):
+    device_id: str
+    credits: int
+    oa_follow_bonus_claimed: bool
+    entitlements_enforced: bool
+
+
+class WechatSceneResponse(BaseModel):
+    short_code: str
+    hint: str
+

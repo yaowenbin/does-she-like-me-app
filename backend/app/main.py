@@ -4,15 +4,35 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse, Response
 
 from .db import Database
+from .entitlements_db import (
+    consume_credit_for_analyze,
+    grant_oa_follow_bonus,
+    redeem_gift_code,
+    resolve_scene_to_device,
+    upsert_scene_token,
+    ensure_device,
+    device_row,
+)
 from .llm_client import create_llm_client
-from .models import AnalyzeRequest, AnalyzeResult, CreateArchiveRequest, PasteImportRequest
+from .models import (
+    AnalyzeRequest,
+    AnalyzeResult,
+    CreateArchiveRequest,
+    EntitlementsMeResponse,
+    PasteImportRequest,
+    RedeemRequest,
+    WechatSceneResponse,
+)
 from .parser import normalize_wx_txt
+from .pdf_export import report_markdown_to_pdf_bytes
 from .prompt_builder import build_system_and_user_prompts
 from .ocr import ocr_image_bytes
+from .wechat_mp import parse_subscribe_event, strip_qrscene, verify_signature
 
 
 def get_data_dir() -> Path:
@@ -27,6 +47,29 @@ uploads_dir.mkdir(parents=True, exist_ok=True)
 db = Database(data_dir / "does-she-like-me.sqlite3")
 llm_client = create_llm_client()
 
+
+def _entitlements_enforce() -> bool:
+    return os.getenv("ENTITLEMENTS_ENFORCE", "").strip().lower() in ("1", "true", "yes")
+
+
+def _initial_device_credits() -> int:
+    try:
+        return max(0, int(os.getenv("INITIAL_DEVICE_CREDITS", "0")))
+    except ValueError:
+        return 0
+
+
+def _oa_follow_bonus() -> int:
+    try:
+        return max(1, int(os.getenv("OA_FOLLOW_BONUS_CREDITS", "1")))
+    except ValueError:
+        return 1
+
+
+def _wechat_token() -> str:
+    return os.getenv("WECHAT_MP_TOKEN", "").strip()
+
+
 app = FastAPI(title="does-she-like-me-web API")
 
 app.add_middleware(
@@ -39,7 +82,131 @@ app.add_middleware(
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"ok": True}
+    return {"ok": True, "entitlements_enforce": _entitlements_enforce()}
+
+
+@app.get("/api/entitlements/me", response_model=EntitlementsMeResponse)
+def entitlements_me(x_device_id: str | None = Header(None, alias="X-Device-Id")) -> EntitlementsMeResponse:
+    did = (x_device_id or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="缺少请求头 X-Device-Id（请更新前端）")
+    with db._connect() as conn:
+        row = ensure_device(conn, did, initial_credits=_initial_device_credits())
+        conn.commit()
+    return EntitlementsMeResponse(
+        device_id=did,
+        credits=int(row["credits"]),
+        oa_follow_bonus_claimed=bool(row["oa_follow_bonus_claimed"]),
+        entitlements_enforced=_entitlements_enforce(),
+    )
+
+
+@app.post("/api/entitlements/redeem")
+def entitlements_redeem(
+    body: RedeemRequest,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> dict:
+    did = (x_device_id or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="缺少 X-Device-Id")
+    with db._connect() as conn:
+        ok, reason, added = redeem_gift_code(
+            conn,
+            did,
+            body.code,
+            initial_credits=_initial_device_credits(),
+        )
+        conn.commit()
+    if not ok:
+        raise HTTPException(status_code=400, detail=f"兑换失败：{reason}")
+    row = None
+    with db._connect() as conn:
+        row = device_row(conn, did)
+    return {"ok": True, "added": added, "credits": int(row["credits"]) if row else 0}
+
+
+@app.get("/api/entitlements/wechat-scene", response_model=WechatSceneResponse)
+def entitlements_wechat_scene(x_device_id: str | None = Header(None, alias="X-Device-Id")) -> WechatSceneResponse:
+    did = (x_device_id or "").strip()
+    if not did:
+        raise HTTPException(status_code=400, detail="缺少 X-Device-Id")
+    with db._connect() as conn:
+        short = upsert_scene_token(conn, did, initial_credits=_initial_device_credits())
+        conn.commit()
+    return WechatSceneResponse(
+        short_code=short,
+        hint="在公众号后台创建「临时/永久带参二维码」，scene 填写此 short_code；用户扫码关注后，系统将为其设备赠送一次分析次数（仅首关有效）。",
+    )
+
+
+@app.api_route(
+    "/api/wechat/callback",
+    methods=["GET", "POST"],
+    response_model=None,
+)
+async def wechat_callback(request: Request) -> Response | PlainTextResponse:
+    token = _wechat_token()
+    if not token:
+        raise HTTPException(status_code=503, detail="未配置 WECHAT_MP_TOKEN")
+
+    qp = request.query_params
+    signature = qp.get("signature", "") or ""
+    timestamp = qp.get("timestamp", "") or ""
+    nonce = qp.get("nonce", "") or ""
+    if not verify_signature(token=token, timestamp=timestamp, nonce=nonce, signature=signature):
+        raise HTTPException(status_code=403, detail="signature")
+
+    if request.method == "GET":
+        return PlainTextResponse(qp.get("echostr", "") or "")
+
+    body = await request.body()
+    msg_type, event, event_key = parse_subscribe_event(body)
+    if event in ("subscribe", "SCAN") and event_key:
+        short = strip_qrscene(event_key)
+        if short:
+            with db._connect() as conn:
+                device_id = resolve_scene_to_device(conn, short)
+                if device_id:
+                    grant_oa_follow_bonus(
+                        conn,
+                        device_id,
+                        bonus_credits=_oa_follow_bonus(),
+                        initial_credits=_initial_device_credits(),
+                    )
+                conn.commit()
+    return Response(status_code=200)
+
+
+@app.get("/api/archives/{archive_id}/export/pdf", response_model=None)
+def export_report_pdf(
+    archive_id: str,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> Response:
+    if _entitlements_enforce() and not (x_device_id or "").strip():
+        raise HTTPException(status_code=400, detail="缺少 X-Device-Id")
+    a = db.get_archive(archive_id)
+    if not a:
+        raise HTTPException(status_code=404, detail="archive not found")
+    rep = db.get_report(archive_id)
+    if not rep:
+        raise HTTPException(status_code=400, detail="暂无报告，请先生成")
+    title = (a.name or "治愈报告").strip() or "治愈报告"
+    try:
+        pdf_bytes = report_markdown_to_pdf_bytes(
+            report_markdown=rep["report_markdown"],
+            title=title,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"PDF 生成失败（若首次使用请在后端执行 playwright install chromium）：{e}",
+        ) from e
+    fn = f"report-{archive_id[:8]}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fn}"'},
+    )
 
 
 @app.get("/api/archives")
@@ -203,6 +370,7 @@ async def import_ocr(
 def analyze_archive(
     archive_id: str,
     req: AnalyzeRequest,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
 ) -> AnalyzeResult:
     a = db.get_archive(archive_id)
     if not a:
@@ -211,13 +379,34 @@ def analyze_archive(
     if not upload_path or not upload_path.is_file():
         raise HTTPException(status_code=400, detail="missing imported content (wx-txt / paste / ocr)")
 
+    did = (x_device_id or "").strip()
+    if _entitlements_enforce():
+        if not did:
+            raise HTTPException(
+                status_code=400,
+                detail="缺少 X-Device-Id，无法扣次。请刷新页面或更新客户端。",
+            )
+        with db._connect() as conn:
+            ok, reason = consume_credit_for_analyze(
+                conn, did, initial_credits=_initial_device_credits()
+            )
+            conn.commit()
+        if not ok:
+            raise HTTPException(
+                status_code=402,
+                detail=f"分析次数不足（{reason}）。请关注公众号领取或兑换卡密。",
+            )
+
     normalized_chat_text = upload_path.read_text(encoding="utf-8", errors="replace")
-    system_prompt, user_prompt = build_system_and_user_prompts(
-        stage=a.stage,
-        scenario=a.scenario,
-        tags=a.tags,
-        normalized_chat_text=normalized_chat_text,
-    )
+    try:
+        system_prompt, user_prompt = build_system_and_user_prompts(
+            stage=a.stage,
+            scenario=a.scenario,
+            tags=a.tags,
+            normalized_chat_text=normalized_chat_text,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
     report_text = llm_client.chat(
         [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],

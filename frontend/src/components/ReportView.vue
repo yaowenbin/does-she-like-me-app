@@ -4,11 +4,17 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import * as echarts from 'echarts'
 
-type LensSection = { lensTag: string; lensId: 'L1' | 'L2' | 'L3' | 'L4' | 'L5'; content: string }
+type LensSection = { lensTag: string; lensId: 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'L6'; content: string }
 
-const props = defineProps<{
-  markdown: string
-}>()
+const props = withDefaults(
+  defineProps<{
+    markdown: string
+    layout?: 'default' | 'fullscreen'
+  }>(),
+  { layout: 'default' }
+)
+
+const isFs = computed(() => props.layout === 'fullscreen')
 
 const behaviorRadarRef = ref<HTMLDivElement | null>(null)
 const lensRadarRef = ref<HTMLDivElement | null>(null)
@@ -51,12 +57,12 @@ function parseLensSections(md: string): LensSection[] {
   const out: LensSection[] = []
   if (!md) return out
 
-  const re = /【([^】]*?·\s*L[1-5])】/g
+  const re = /【([^】]*?·\s*L[1-6])】/g
   const matches = Array.from(md.matchAll(re))
   for (let i = 0; i < matches.length; i++) {
     const m = matches[i]
     const lensTag = m[1] // includes Lx
-    const lensIdMatch = lensTag.match(/L([1-5])/)
+    const lensIdMatch = lensTag.match(/L([1-6])/)
     const lensId = lensIdMatch?.[1] ? (`L${lensIdMatch[1]}` as any) : null
     if (!lensId) continue
 
@@ -122,6 +128,39 @@ const extracted = computed(() => {
   return { evidence, lensSections, behaviorRows, synthesisBlock, interval, nextLine, whenStop }
 })
 
+const humanBlock = computed(() => getBlockAfterHeading(props.markdown || '', '一眼看懂（人话版）'))
+const heartbeatBlock = computed(() => getBlockAfterHeading(props.markdown || '', '心动指数'))
+
+function parseHeartbeatBlock(block: string) {
+  if (!block) {
+    return { tier: '', low: null as number | null, high: null as number | null, oneLine: '' }
+  }
+  const tier =
+    block.match(/\*\*档位\*\*\s*[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+    block.match(/[-*]\s*\*\*档位\*\*\s*[:：]\s*([^\n]+)/)?.[1]?.trim() ||
+    ''
+  const rm = block.match(/(\d+)\s*[–-]\s*(\d+)/)
+  const oneLine = block.match(/\*\*一句话\*\*\s*[:：]\s*([^\n]+)/)?.[1]?.trim() || ''
+  return {
+    tier,
+    low: rm ? Number(rm[1]) : null,
+    high: rm ? Number(rm[2]) : null,
+    oneLine,
+  }
+}
+
+const heartbeatMeta = computed(() => parseHeartbeatBlock(heartbeatBlock.value))
+
+const humanHtml = computed(() => renderMarkdown(humanBlock.value))
+
+const heartbeatBarPct = computed(() => {
+  const { low, high } = heartbeatMeta.value
+  if (low == null || high == null) return null
+  return Math.min(100, Math.max(0, Math.round((low + high) / 2)))
+})
+
+const showHero = computed(() => Boolean(humanBlock.value.trim() || heartbeatBlock.value.trim()))
+
 const behaviorRadar = computed(() => {
   const rows = extracted.value.behaviorRows
   // 取前 6 个可读维度
@@ -138,8 +177,8 @@ const behaviorRadar = computed(() => {
 
 const lensRadar = computed(() => {
   const sections = extracted.value.lensSections
-  const lensOrder: LensSection['lensId'][] = ['L1', 'L2', 'L3', 'L4', 'L5']
-  const counts: Record<string, number> = { L1: 0, L2: 0, L3: 0, L4: 0, L5: 0 }
+  const lensOrder: LensSection['lensId'][] = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6']
+  const counts: Record<string, number> = { L1: 0, L2: 0, L3: 0, L4: 0, L5: 0, L6: 0 }
   for (const s of sections) {
     const q = extractEvidenceQuotes(s.content).length
     counts[s.lensId] += q
@@ -148,6 +187,17 @@ const lensRadar = computed(() => {
   const values = lensOrder.map((id) => Math.min(5, counts[id]))
   return { lensOrder, values, counts }
 })
+
+/** 雷达轴文字换行，避免长维度名被裁切 */
+function wrapAxisLabel(s: string, chunk: number): string {
+  const t = (s || '').replace(/\s+/g, ' ').trim()
+  if (t.length <= chunk) return t
+  const lines: string[] = []
+  for (let i = 0; i < t.length; i += chunk) {
+    lines.push(t.slice(i, i + chunk))
+  }
+  return lines.join('\n')
+}
 
 function initCharts() {
   const bEl = behaviorRadarRef.value
@@ -162,14 +212,25 @@ function initCharts() {
 
   const behaviorOption: any = {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item' },
+    tooltip: { trigger: 'item', confine: true },
     radar: {
+      center: ['50%', '53%'],
       indicator: bIndicators.map((n) => ({ name: n, max: 5 })),
-      radius: 110,
+      radius: '34%',
       splitNumber: 5,
-      axisName: { color: 'rgba(36, 24, 42, 0.75)' },
+      axisName: {
+        color: 'rgba(36, 24, 42, 0.82)',
+        fontFamily: 'Nunito Sans, ui-sans-serif, system-ui',
+        fontWeight: 800,
+        fontSize: 10,
+        lineHeight: 14,
+        margin: 12,
+        formatter: (v: string) => wrapAxisLabel(v, 7),
+      },
       splitLine: { lineStyle: { color: 'rgba(36, 24, 42, 0.10)' } },
-      splitArea: { areaStyle: { color: ['rgba(255,127,181,0.05)', 'rgba(255,193,218,0.06)'] } },
+      splitArea: {
+        areaStyle: { color: ['rgba(240,98,146,0.05)', 'rgba(225,190,231,0.06)'] },
+      },
     },
     series: [
       {
@@ -177,8 +238,12 @@ function initCharts() {
         type: 'radar',
         data: [{ value: bValues, name: '评分' }],
         areaStyle: { opacity: 0.35 },
-        lineStyle: { color: '#ff7fb5', width: 2 },
-        itemStyle: { color: '#ff7fb5' },
+        lineStyle: { color: '#f06292', width: 2, shadowColor: 'rgba(240,98,146,0.25)', shadowBlur: 10 },
+        itemStyle: { color: '#f06292' },
+        emphasis: {
+          lineStyle: { width: 3 },
+          itemStyle: { color: '#f06292' },
+        },
       },
     ],
   }
@@ -188,14 +253,24 @@ function initCharts() {
   const lensValues = lensRadar.value.values
   const lensOption: any = {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item' },
+    tooltip: { trigger: 'item', confine: true },
     radar: {
+      center: ['50%', '53%'],
       indicator: lensOrder.map((id) => ({ name: id, max: 5 })),
-      radius: 90,
+      radius: '36%',
       splitNumber: 5,
-      axisName: { color: 'rgba(36, 24, 42, 0.75)' },
+      axisName: {
+        color: 'rgba(36, 24, 42, 0.82)',
+        fontFamily: 'Nunito Sans, ui-sans-serif, system-ui',
+        fontWeight: 800,
+        fontSize: 10,
+        lineHeight: 15,
+        margin: 10,
+      },
       splitLine: { lineStyle: { color: 'rgba(36, 24, 42, 0.10)' } },
-      splitArea: { areaStyle: { color: ['rgba(169,139,255,0.06)', 'rgba(255,193,218,0.06)'] } },
+      splitArea: {
+        areaStyle: { color: ['rgba(169,139,255,0.06)', 'rgba(240,98,146,0.04)'] },
+      },
     },
     series: [
       {
@@ -203,12 +278,20 @@ function initCharts() {
         type: 'radar',
         data: [{ value: lensValues, name: '密度' }],
         areaStyle: { opacity: 0.32 },
-        lineStyle: { color: '#a98bff', width: 2 },
+        lineStyle: { color: '#a98bff', width: 2, shadowColor: 'rgba(169,139,255,0.25)', shadowBlur: 10 },
         itemStyle: { color: '#a98bff' },
+        emphasis: {
+          lineStyle: { width: 3 },
+          itemStyle: { color: '#a98bff' },
+        },
       },
     ],
   }
   lensChart.setOption(lensOption)
+  requestAnimationFrame(() => {
+    behaviorChart?.resize()
+    lensChart?.resize()
+  })
 }
 
 function disposeCharts() {
@@ -231,16 +314,50 @@ watch(
   }
 )
 
+function onWinResize() {
+  behaviorChart?.resize()
+  lensChart?.resize()
+}
+
 onMounted(async () => {
   await nextTick()
   initCharts()
+  window.addEventListener('resize', onWinResize)
 })
 
-onBeforeUnmount(() => disposeCharts())
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onWinResize)
+  disposeCharts()
+})
 </script>
 
 <template>
-  <div>
+  <div :class="['reportViewRoot', { 'reportViewRoot--fs': isFs }]">
+    <div v-if="showHero" class="reportHeroGrid">
+      <div v-if="humanBlock.trim()" class="reportHeroCard reportHeroCard--human">
+        <div class="reportHeroKicker">给忙碌的你 · 先看这段就够</div>
+        <div class="reportHeroTitle">一眼看懂</div>
+        <div class="reportHeroMd" v-html="humanHtml"></div>
+      </div>
+      <div v-if="heartbeatBlock.trim()" class="reportHeroCard reportHeroCard--pulse">
+        <div class="reportHeroKicker">不是算命 · 只是一个温柔的刻度</div>
+        <div class="reportHeroTitle">心动指数</div>
+        <div v-if="heartbeatMeta.tier" class="heartbeatTierPill">{{ heartbeatMeta.tier }}</div>
+        <div v-if="heartbeatBarPct != null" class="heartbeatGauge" aria-hidden="true">
+          <div class="heartbeatGaugeFill" :style="{ width: heartbeatBarPct + '%' }"></div>
+        </div>
+        <div v-if="heartbeatMeta.low != null && heartbeatMeta.high != null" class="heartbeatRangeText">
+          区间约 {{ heartbeatMeta.low }}–{{ heartbeatMeta.high }}（越高越偏「心动信号」一侧，仍非精确预测）
+        </div>
+        <div v-if="heartbeatMeta.oneLine" class="heartbeatOneLine">{{ heartbeatMeta.oneLine }}</div>
+        <div
+          v-else
+          class="reportHeroMd heartbeatFallbackMd"
+          v-html="renderMarkdown(heartbeatBlock)"
+        ></div>
+      </div>
+    </div>
+
     <div class="healNotice">
       <div class="bubbleHeader">
         <div class="bubbleTag">自我关爱提醒</div>
@@ -252,70 +369,86 @@ onBeforeUnmount(() => disposeCharts())
       </div>
     </div>
 
-    <div class="twoCol" style="margin-top: 12px">
-      <div>
-        <div class="bubbleWrap" v-if="extracted.interval">
-          <div class="sectionTitle">番剧字幕（合成结论）</div>
-          <div class="bubbleText">
-            <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
-            <div v-if="extracted.nextLine">
-              <b>下一步：</b> {{ extracted.nextLine }}
+    <details class="proFold" open>
+      <summary class="proFoldSummary">专业分析（证据、图表与量表）</summary>
+      <p class="proFoldHint muted">下面偏长，适合想慢慢核对细节的你；普通读者看完上面两段也可以停在这里。</p>
+
+      <div class="reportProGrid">
+        <div class="reportProCol reportProCol--narrative">
+          <div class="reportColTitle">第 1 列 · 合成与透镜</div>
+          <div class="bubbleWrap" v-if="extracted.interval">
+            <div class="sectionTitle">番剧字幕（合成结论）</div>
+            <div class="bubbleText">
+              <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
+              <div v-if="extracted.nextLine">
+                <b>下一步：</b> {{ extracted.nextLine }}
+              </div>
+              <div v-if="extracted.whenStop" style="margin-top: 6px">
+                <b>何时停：</b> {{ extracted.whenStop }}
+              </div>
             </div>
-            <div v-if="extracted.whenStop" style="margin-top: 6px">
-              <b>何时停：</b> {{ extracted.whenStop }}
+          </div>
+
+          <div class="reportLensStack">
+            <div class="bubbleWrap" v-for="s in extracted.lensSections" :key="s.lensTag">
+              <div class="sectionTitle">章节（{{ s.lensId }}）</div>
+              <div class="bubbleText">
+                <div
+                  style="
+                    display: flex;
+                    align-items: center;
+                    justify-content: space-between;
+                    gap: 10px;
+                    margin-bottom: 8px;
+                    flex-wrap: wrap;
+                  "
+                >
+                  <div class="bubbleTag">{{ s.lensTag }}</div>
+                  <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
+                </div>
+                <div v-html="renderMarkdown(s.content)"></div>
+              </div>
             </div>
           </div>
         </div>
 
-        <div class="bubbleWrap" v-for="s in extracted.lensSections" :key="s.lensTag" style="margin-top: 12px">
-          <div class="sectionTitle">章节（{{ s.lensId }}）</div>
-          <div class="bubbleText">
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px">
-              <div class="bubbleTag">{{ s.lensTag }}</div>
-              <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
+        <div class="reportProCol reportProCol--charts">
+          <div class="reportColTitle">第 2 列 · 雷达图</div>
+          <div class="sectionTitle">行为维度雷达</div>
+          <div class="chartBox chartBox--radar" ref="behaviorRadarRef"></div>
+          <div class="muted chartHint">
+            基于「行为层量表」可解析数值；半径留白便于完整显示轴标签。
+          </div>
+
+          <div class="sectionTitle" style="margin-top: 8px">透镜证据密度</div>
+          <div class="chartBox chartBox--radar" ref="lensRadarRef"></div>
+          <div class="muted chartHint">L1–L6 启发式密度，非科学量化。</div>
+        </div>
+
+        <div class="reportProCol reportProCol--evidence">
+          <div class="reportColTitle">第 3 列 · 摘录与量表</div>
+          <div class="sectionTitle">证据卡片</div>
+          <div class="evidenceList evidenceList--scroll">
+            <div v-if="extracted.evidence.length === 0" class="muted">未在报告中找到可展示的证据引文。</div>
+            <div v-for="q in extracted.evidence.slice(0, 12)" :key="q" class="evidenceItem">
+              <div class="small">摘录（用于复核，不做判决）</div>
+              <div>{{ q }}</div>
             </div>
-            <div v-html="renderMarkdown(s.content)"></div>
+          </div>
+
+          <div class="sectionTitle" style="margin-top: 14px">行为层量表（可复核）</div>
+          <div class="evidenceList evidenceList--scroll">
+            <div v-if="extracted.behaviorRows.length === 0" class="muted">报告中未解析到行为层量表。</div>
+            <div v-for="r in extracted.behaviorRows.slice(0, 12)" :key="r.dimension" class="evidenceItem">
+              <div class="small">{{ r.dimension }}</div>
+              <div style="font-weight: 900">
+                {{ r.score === null ? 'nc' : r.score }}
+              </div>
+            </div>
           </div>
         </div>
       </div>
-
-      <div>
-        <div class="sectionTitle">可视化（雷达）</div>
-        <div class="chartBox" ref="behaviorRadarRef"></div>
-        <div class="muted" style="font-size: 12px; margin-top: 6px">
-          行为维度雷达：基于报告“行为层量表”的可解析数值（如为 `nc` 则不参与）。
-        </div>
-
-        <div class="chartBox" ref="lensRadarRef" style="height: 220px; margin-top: 18px"></div>
-        <div class="muted" style="font-size: 12px; margin-top: 6px">
-          透镜雷达：基于每个透镜里提取到的“证据引用数量”的启发式，不等于科学量化。
-        </div>
-
-        <div class="sectionTitle" style="margin-top: 18px">证据卡片</div>
-        <div class="evidenceList">
-          <div v-if="extracted.evidence.length === 0" class="muted">未在报告中找到可展示的证据引文。</div>
-          <div v-for="q in extracted.evidence.slice(0, 8)" :key="q" class="evidenceItem">
-            <div class="small">摘录（用于复核，不做判决）</div>
-            <div>{{ q }}</div>
-          </div>
-        </div>
-
-        <div class="sectionTitle" style="margin-top: 18px">行为层量表（可复核）</div>
-        <div class="evidenceList">
-          <div v-if="extracted.behaviorRows.length === 0" class="muted">报告中未解析到行为层量表。</div>
-          <div
-            v-for="r in extracted.behaviorRows.slice(0, 8)"
-            :key="r.dimension"
-            class="evidenceItem"
-          >
-            <div class="small">{{ r.dimension }}</div>
-            <div style="font-weight: 900">
-              {{ r.score === null ? 'nc' : r.score }}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </details>
   </div>
 </template>
 

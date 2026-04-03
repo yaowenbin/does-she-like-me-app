@@ -1,25 +1,12 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
+
+from .skills_bundle import resolve_skill_root
 
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace")
-
-
-def _find_default_skill_root() -> Path | None:
-    """
-    Locate `Day7/does-she-like-me/skills/does-she-like-me` relative to this file.
-    """
-    here = Path(__file__).resolve()
-    # .../does-she-like-me-web/backend/app/prompt_builder.py
-    # parents[3] should be .../Day7
-    day7_dir = here.parents[3]
-    candidate = day7_dir / "does-she-like-me" / "skills" / "does-she-like-me"
-    if (candidate / "SKILL.md").is_file():
-        return candidate
-    return None
 
 
 def build_system_and_user_prompts(
@@ -31,16 +18,7 @@ def build_system_and_user_prompts(
     skill_root: Path | None = None,
 ) -> tuple[str, str]:
     if skill_root is None:
-        env = (os.getenv("DOES_SHE_LIKE_ME_SKILL_ROOT") or "").strip()
-        if env:
-            skill_root = Path(env)
-        else:
-            skill_root = _find_default_skill_root()
-
-    if not skill_root:
-        raise RuntimeError(
-            "Cannot locate skill templates. Set DOES_SHE_LIKE_ME_SKILL_ROOT env var or place templates under Day7/does-she-like-me/skills/does-she-like-me."
-        )
+        skill_root = resolve_skill_root()
 
     # Load prompt fragments (keep it simple: we rely on the skill templates' wording).
     safety = _read_text(skill_root / "prompts" / "safety_refusal.md")
@@ -51,6 +29,7 @@ def build_system_and_user_prompts(
     lens_psy = _read_text(skill_root / "prompts" / "lens_psychology.md")
     lens_lit = _read_text(skill_root / "prompts" / "lens_literature.md")
     lens_ast = _read_text(skill_root / "prompts" / "lens_astrology.md")
+    lens_att = _read_text(skill_root / "prompts" / "lens_attainability.md")
     synthesis = _read_text(skill_root / "prompts" / "synthesis.md")
     reference = _read_text(skill_root / "reference.md")
 
@@ -61,7 +40,9 @@ def build_system_and_user_prompts(
         "必须遵守安全边界：若材料疑似涉及监视/骚扰/盗号/未成年人性内容或他人同意缺失，必须拒答并停止分析。\n\n"
         f"{safety}\n\n"
         "你必须输出 Markdown 报告，并严格遵循证据卡片与 synthesis 的结构与约束。"
-        "\n\n【术语与禁用表述参考】\n"
+        "报告需要同时服务两类读者：先给出「普通人一眼能懂」的总结与心动指数，再给出可复核的专业分析；"
+        "专业部分仍要有短句解释，避免只有术语堆砌。\n\n"
+        "【术语与禁用表述参考】\n"
         f"{reference}\n"
     )
 
@@ -77,16 +58,26 @@ def build_system_and_user_prompts(
         f"{rubric}\n\n"
         "【任务 3：多透镜解读】\n"
         f"{lens_evo}\n\n{lens_gene}\n\n{lens_psy}\n\n{lens_lit}\n\n{lens_ast}\n\n"
-        "【任务 4：多透镜合成（必须显式写出冲突调解）】\n"
+        f"{lens_att}\n\n"
+        "【任务 4：多透镜合成（必须显式写出冲突调解；若含 L6 可得性须纳入冲突调解）】\n"
         f"{synthesis}\n\n"
         "【原始聊天文本（已尽量归一化）】\n"
         "-----BEGIN CHAT-----\n"
         f"{normalized_chat_text}\n"
         "-----END CHAT-----\n\n"
-        "输出要求：\n"
-        "1) 顶层必须包含「透镜强度说明」小表、行为层量表、各透镜小节、合成（Synthesis）。\n"
+        "输出要求（顺序很重要，请严格使用下列二级标题）：\n"
+        "0) 开头两段必须先写，方便非专业读者理解：\n"
+        "## 一眼看懂（人话版）\n"
+        "用 4–10 行短句或列表，口语化、少术语；必须交代：大致可能是什么、哪些不能确定、建议怎么看待这份分析。\n"
+        "## 心动指数\n"
+        "用 Markdown 列表写三行（缺一不可）：\n"
+        "- **档位**：从「偏低 / 偏谨慎 / 不明 / 中等 / 中等偏高 / 偏高 / 样本不足」中选最贴近的一项（只能选一个）。\n"
+        "- **指数**：用 **两个数字的闭区间** 表示心动程度（例如 **52–68**）；"
+        "禁止写成单一精确百分比（如 73%）；若样本不足则写「样本不足」并简短说明原因。\n"
+        "- **一句话**：用一句完整的人话总结给非专业读者。\n"
+        "1) 接着写专业部分：必须包含「透镜强度说明」小表（L1–L6）、行为层量表、各透镜小节（含 L6 可得性-多维时须含专业整合 + 给用户的人话要点）、合成（Synthesis）。\n"
         "2) 星座模块仅在用户自愿提供标签且匹配时启用；否则跳过并注明。\n"
-        "3) 禁止输出伪精确数字（例如她 87% 爱你）。使用区间/等级（偏低/不明/中等偏高/样本不足）。\n"
+        "3) 禁止输出伪精确数字（例如她 87% 爱你）。心动指数已用区间与档位表达，全文保持一致。\n"
     )
 
     return system_prompt, user_prompt

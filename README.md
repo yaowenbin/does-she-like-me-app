@@ -4,11 +4,12 @@
 
 ## 运行方式（开发）
 
-### 1) 后端
+### 1) 后端uvicorn app.main:app --reload --port 8000
 
 ```bash
 cd backend
 pip install -r requirements.txt
+python -m playwright install chromium
 uvicorn app.main:app --reload --port 8000  # 端口被占用可改成 8001
 
 :: 建议：用 `.env` 管理密钥（见下方「推荐配置」），避免把环境变量写进 README
@@ -23,10 +24,21 @@ uvicorn app.main:app --reload --port 8000  # 端口被占用可改成 8001
 
 ### 模板来源（Skill prompts）
 
-默认从本仓库内的 `../does-she-like-me/skills/does-she-like-me` 自动加载提示词模板。
-若你把 web 项目单独拷走/发布，请设置：
+技能包来自开源仓库 **[does-she-like-me](https://github.com/yaowenbin/does-she-like-me)**（`skills/does-she-like-me`）。
+
+**解析顺序（工程化默认）：** 显式环境变量 → 与本仓库并排的 monorepo 开发路径 → `DATA_DIR/.skills/does-she-like-me` 缓存 → **首次需要时自动 `git clone` 官方仓库并安装到缓存**（需本机已安装 Git 且可访问 GitHub；可用 `DOES_SHE_LIKE_ME_SKILLS_GIT_URL` 指向镜像）。
+
+**命令行预装（推荐发布/离线前执行）：** 在 `backend` 目录：
 
 ```bash
+python -m app.skills_bundle install
+python -m app.skills_bundle status
+```
+
+仅拷贝 web 项目、不需要自动下载时：关闭自动安装并手动指定路径：
+
+```bash
+set DOES_SHE_LIKE_ME_SKILLS_AUTO_INSTALL=0
 set DOES_SHE_LIKE_ME_SKILL_ROOT=绝对路径\to\skills\does-she-like-me
 ```
 
@@ -39,6 +51,23 @@ npm run dev
 ```
 
 前端默认把 `/api` 转发到 `http://127.0.0.1:${VITE_BACKEND_PORT}`；不设则为 `8000`。
+
+可选：`frontend/.env` 中设置 `VITE_WECHAT_MP_URL=https://mp.weixin.qq.com/...` 显示「关注公众号」外链。
+
+### 次数、卡密与公众号引流（自建）
+
+- 前端通过请求头 **`X-Device-Id`**（本地 `localStorage` UUID）标识设备；**不建账号体系**也可按设备扣次。
+- **`ENTITLEMENTS_ENFORCE=1`**：每次成功调用「生成报告」消耗 1 次；次数不足返回 HTTP 402。
+- **`INITIAL_DEVICE_CREDITS`**：新设备默认赠送次数（生产可设 `0`；联调可设 `99`）。
+- **卡密表 `gift_codes`**：在 SQLite 中插入 `code` + `credits`，用户在前端兑换后增加次数（一次性使用）。
+
+```sql
+INSERT INTO gift_codes (code, credits) VALUES ('你的卡密', 5);
+```
+
+- **公众号带参二维码**：`GET /api/entitlements/wechat-scene` 返回 `short_code`。在微信公众平台创建二维码时 **scene** 填该字符串；用户扫码关注后，微信服务器 `POST /api/wechat/callback`，服务端给对应设备增加 **`OA_FOLLOW_BONUS_CREDITS`（默认 1）**，且 **`oa_follow_bonus_claimed`** 保证每设备仅一次。
+- 需配置 **`WECHAT_MP_TOKEN`**（与公众平台「基本配置」Token 一致），并将服务器 URL 设为 `https://你的域名/api/wechat/callback`。
+- **导出 PDF**：`GET /api/archives/{id}/export/pdf`（Playwright 无头 Chromium，渲染 Markdown）；与浏览器页面布局独立，版式更稳定。
 
 ## 隐私说明
 

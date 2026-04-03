@@ -1,1 +1,1 @@
-{"root":["./src/api.ts","./src/main.ts","./src/vite-env.d.ts","./src/types/echarts.d.ts","./src/app.vue","./src/components/reportview.vue","./src/components/sakurascene.vue"],"version":"5.9.3"}
+{"root":["./src/api.ts","./src/device.ts","./src/main.ts","./src/vite-env.d.ts","./src/types/echarts.d.ts","./src/app.vue","./src/components/reportview.vue","./src/components/sakurascene.vue"],"version":"5.9.3"}

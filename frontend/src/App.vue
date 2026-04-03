@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import {
   NButton,
   NConfigProvider,
@@ -12,18 +12,64 @@ import {
 import {
   analyzeArchive,
   createArchive,
+  downloadReportPdf,
   getArchiveDetail,
+  getEntitlementsMe,
+  getWechatScene,
   importWxTxt,
   importPaste,
   importOcr,
   listArchives,
+  redeemGiftCode,
   type ArchiveSummary,
+  type EntitlementsMe,
 } from './api'
 import ReportView from './components/ReportView.vue'
 import SakuraScene from './components/SakuraScene.vue'
 
 const loading = ref(false)
+/** 仅「生成报告」阶段的整页温馨 loading */
+const reportGenerating = ref(false)
 const error = ref<string | null>(null)
+/** 报告全屏层：生成后自动打开，也可手动打开 */
+const reportFullscreen = ref(false)
+
+/** 设备维度次数 / 卡密 / 公众号引流 */
+const entitlements = ref<EntitlementsMe | null>(null)
+const redeemCodeInput = ref('')
+const wechatShortCode = ref('')
+const pdfExporting = ref(false)
+
+const wechatMpProfileUrl = (
+  import.meta.env.VITE_WECHAT_MP_URL?.toString().replace(/\/$/, '') || ''
+).trim()
+
+const warmMessages = [
+  '正在慢慢读你的聊天记录，不着急…',
+  '把感受整理成语言，需要一点点时间。',
+  '会先帮你写「一眼看懂」和心动指数，再写专业分析。',
+  '如果等久了，就当给自己泡杯热饮的间隙。',
+]
+
+const warmMessageIdx = ref(0)
+let warmTimer: ReturnType<typeof setInterval> | null = null
+
+function startWarmMessages() {
+  warmMessageIdx.value = 0
+  stopWarmMessages()
+  warmTimer = setInterval(() => {
+    warmMessageIdx.value = (warmMessageIdx.value + 1) % warmMessages.length
+  }, 2800)
+}
+
+function stopWarmMessages() {
+  if (warmTimer) {
+    clearInterval(warmTimer)
+    warmTimer = null
+  }
+}
+
+const uiBusy = computed(() => loading.value || reportGenerating.value)
 
 const archives = ref<ArchiveSummary[]>([])
 const activeId = ref<string>('')
@@ -334,6 +380,8 @@ async function onAnalyze() {
   if (!activeId.value) return
   error.value = null
   loading.value = true
+  reportGenerating.value = true
+  startWarmMessages()
   try {
     const res = await analyzeArchive(activeId.value, { temperature: Number(form.temperature) })
     await refreshDetail()
@@ -346,12 +394,77 @@ async function onAnalyze() {
         created_at: new Date().toISOString(),
       },
     }
+    reportFullscreen.value = true
+    await refreshEntitlements()
   } catch (e: any) {
     error.value = e?.message || String(e)
   } finally {
+    stopWarmMessages()
     loading.value = false
+    reportGenerating.value = false
   }
 }
+
+function openReportFullscreen() {
+  if (detail.value?.report?.report_markdown) reportFullscreen.value = true
+}
+
+function exitReportFullscreen() {
+  reportFullscreen.value = false
+}
+
+async function exportReportPdf() {
+  if (!activeId.value) return
+  error.value = null
+  pdfExporting.value = true
+  try {
+    const blob = await downloadReportPdf(activeId.value)
+    const u = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = u
+    a.download = `report-${activeId.value.slice(0, 8)}.pdf`
+    a.rel = 'noopener'
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(u)
+  } catch (e: any) {
+    error.value = e?.message || String(e)
+  } finally {
+    pdfExporting.value = false
+  }
+}
+
+async function refreshEntitlements() {
+  try {
+    entitlements.value = await getEntitlementsMe()
+    if (entitlements.value?.entitlements_enforced) {
+      const s = await getWechatScene()
+      wechatShortCode.value = s.short_code
+    } else {
+      wechatShortCode.value = ''
+    }
+  } catch {
+    entitlements.value = null
+  }
+}
+
+async function onRedeemCode() {
+  error.value = null
+  if (!redeemCodeInput.value.trim()) {
+    error.value = '请输入卡密'
+    return
+  }
+  try {
+    await redeemGiftCode(redeemCodeInput.value.trim())
+    redeemCodeInput.value = ''
+    await refreshEntitlements()
+  } catch (e: any) {
+    error.value = e?.message || String(e)
+  }
+}
+
+onUnmounted(() => stopWarmMessages())
 
 onMounted(async () => {
   try {
@@ -368,6 +481,7 @@ onMounted(async () => {
 
     await refreshArchives()
     await refreshDetail()
+    await refreshEntitlements()
   } catch (e: any) {
     error.value = e?.message || String(e)
   }
@@ -394,14 +508,30 @@ watch(
     if (id) localStorage.setItem('dslm_active_id_v1', id)
   }
 )
+
+watch(reportFullscreen, (v) => {
+  document.body.style.overflow = v ? 'hidden' : ''
+})
 </script>
 
 <template>
   <n-config-provider :theme-overrides="themeOverrides">
-    <SakuraScene />
-    <div class="container">
+    <SakuraScene v-show="!reportFullscreen" />
+
+    <Teleport to="body">
+      <div v-if="reportGenerating" class="pageLoadingOverlay" aria-live="polite" aria-busy="true">
+        <div class="pageLoadingInner">
+          <div class="pageLoadingSpinner" />
+          <div class="pageLoadingTitle">正在生成治愈报告</div>
+          <div class="pageLoadingSub">{{ warmMessages[warmMessageIdx] }}</div>
+          <div class="pageLoadingHint">关闭本页不会中断服务端任务；但若刷新浏览器，请稍后在同档案重试。</div>
+        </div>
+      </div>
+    </Teleport>
+
+    <div v-show="!reportFullscreen" class="container">
       <div class="heroBanner">
-        <div class="heroTitle">她爱你嘛 · 管理页</div>
+        <div class="heroTitle">她爱你嘛 · 治愈报告</div>
         <div class="heroSubtitle">
           作用：导入 wx 聊天 txt / 截图 OCR → 生成证据卡片与多透镜解读 → 调用 DeepSeek 返回治愈报告（Markdown）。
         </div>
@@ -525,13 +655,51 @@ watch(
           </div>
 
           <div style="height: 10px"></div>
-          <n-button :disabled="loading" type="primary" :loading="loading" style="width: 100%" @click="onCreateArchive">
+          <n-button :disabled="uiBusy" type="primary" :loading="loading && !reportGenerating" style="width: 100%" @click="onCreateArchive">
             新建档案
           </n-button>
         </div>
 
         <div class="card rightCol">
           <h2>导入与分析</h2>
+
+          <div v-if="entitlements" class="entitlementsBar">
+            <div class="entitlementsRow">
+              <span
+                >剩余分析次数：<b class="creditNum">{{ entitlements.credits }}</b></span
+              >
+              <span v-if="entitlements.entitlements_enforced" class="muted tiny"
+                >每次生成报告扣 1 次</span
+              >
+              <span v-else class="muted tiny">当前为开放联调（未强制扣次）</span>
+            </div>
+            <div class="entitlementsRow entitlementsActions">
+              <n-input
+                v-model:value="redeemCodeInput"
+                size="small"
+                placeholder="输入卡密，兑换次数"
+                style="flex: 1; min-width: 120px; max-width: 220px"
+                @keydown.enter.prevent="onRedeemCode"
+              />
+              <n-button size="small" type="primary" :disabled="uiBusy" @click="onRedeemCode">
+                兑换
+              </n-button>
+              <a
+                v-if="wechatMpProfileUrl"
+                class="oaLink"
+                :href="wechatMpProfileUrl"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                关注公众号
+              </a>
+            </div>
+            <div v-if="entitlements.entitlements_enforced && wechatShortCode" class="muted tiny sceneHint">
+              公众平台创建<strong>带参二维码</strong>时，scene 填写：
+              <code class="sceneCode">{{ wechatShortCode }}</code>
+              · 用户扫码关注后，本设备自动获赠一次（每个设备仅一次）。
+            </div>
+          </div>
 
           <div class="muted" style="margin-bottom: 10px">
             当前档案：<b>{{ active?.name || '未命名' }}</b>（{{ badge.text }}）
@@ -547,11 +715,11 @@ watch(
                     <input ref="wxTxtFileInputRef" type="file" accept=".txt,text/plain" hidden @change="onWxTxtPicked" />
 
                     <div class="row" style="margin-top: 10px">
-                      <n-button type="default" :disabled="loading" @click="wxTxtFileInputRef?.click()">选择 txt</n-button>
+                      <n-button type="default" :disabled="uiBusy" @click="wxTxtFileInputRef?.click()">选择 txt</n-button>
                       <n-button
                         type="primary"
-                        :disabled="loading || !txtState.files.length"
-                        :loading="loading"
+                        :disabled="uiBusy || !txtState.files.length"
+                        :loading="loading && !reportGenerating"
                         @click="onImportWxTxt"
                       >
                         上传并归一化
@@ -561,7 +729,7 @@ watch(
                     <div class="uploadFileList" v-if="txtState.files.length">
                       <div v-for="(f, idx) in txtState.files" :key="f.name + ':' + idx" class="uploadFileRow">
                         <div class="uploadFileName">{{ f.name }}</div>
-                        <n-button type="error" size="tiny" :disabled="loading" @click="removeTxtAt(idx)">移除</n-button>
+                        <n-button type="error" size="tiny" :disabled="uiBusy" @click="removeTxtAt(idx)">移除</n-button>
                       </div>
                     </div>
 
@@ -581,11 +749,11 @@ watch(
                     <input ref="ocrFileInputRef" type="file" accept="image/*" multiple hidden @change="onOcrPicked" />
 
                     <div class="row" style="margin-top: 10px">
-                      <n-button type="default" :disabled="loading" @click="ocrFileInputRef?.click()">选择截图</n-button>
+                      <n-button type="default" :disabled="uiBusy" @click="ocrFileInputRef?.click()">选择截图</n-button>
                       <n-button
                         type="primary"
-                        :disabled="loading || ocrState.files.length === 0"
-                        :loading="loading"
+                        :disabled="uiBusy || ocrState.files.length === 0"
+                        :loading="loading && !reportGenerating"
                         @click="onImportOcr"
                       >
                         OCR 并归一化
@@ -606,7 +774,7 @@ watch(
                           <div class="uploadThumbName" :title="ocrState.files[idx]?.name || ''">
                             {{ ocrState.files[idx]?.name || '截图' }}
                           </div>
-                          <n-button type="error" size="tiny" :disabled="loading" @click="removeOcrAt(idx)">移除</n-button>
+                          <n-button type="error" size="tiny" :disabled="uiBusy" @click="removeOcrAt(idx)">移除</n-button>
                         </div>
                       </div>
                     </div>
@@ -636,8 +804,8 @@ watch(
                     <div class="row" style="margin-top: 10px">
                       <n-button
                         type="primary"
-                        :disabled="loading || !pasteState.text.trim()"
-                        :loading="loading"
+                        :disabled="uiBusy || !pasteState.text.trim()"
+                        :loading="loading && !reportGenerating"
                         @click="onImportPaste"
                       >
                         粘贴并归一化
@@ -656,13 +824,13 @@ watch(
 
             <div style="height: 10px"></div>
             <n-button
-              :disabled="loading || !canAnalyze"
+              :disabled="uiBusy || !canAnalyze"
               type="primary"
-              :loading="loading"
+              :loading="reportGenerating"
               style="width: 100%"
               @click="onAnalyze"
             >
-              调用 DeepSeek 生成报告
+              {{ reportGenerating ? '正在生成…' : '调用 DeepSeek 生成报告' }}
             </n-button>
           </div>
 
@@ -676,16 +844,45 @@ watch(
 
           <div style="height: 14px"></div>
 
-          <label>治愈报告（番剧字幕 + 气泡章节 + 可视化）</label>
+          <div class="reportInlineHead">
+            <label>治愈报告（人话摘要 + 心动指数 + 专业分析）</label>
+            <n-button
+              v-if="detail?.report?.report_markdown"
+              text
+              type="primary"
+              size="small"
+              @click="openReportFullscreen"
+            >
+              全屏查看
+            </n-button>
+          </div>
           <div v-if="detail?.report?.report_markdown" style="margin-top: 10px">
-            <ReportView :markdown="detail.report.report_markdown" />
+            <ReportView :markdown="detail.report.report_markdown" layout="default" />
           </div>
           <div v-else class="muted" style="margin-top: 10px">
-            点击“调用 DeepSeek 生成报告”后，这里会出现治愈报告。你可以先把自己从“非要有答案”的压力里放出来。
+            生成后会先给你「一眼看懂」和心动指数，再附专业分析。你可以先把自己从“非要有答案”的压力里放出来。
           </div>
         </div>
       </div>
     </div>
+
+    <Teleport to="body">
+      <div
+        v-if="reportFullscreen && detail?.report?.report_markdown"
+        class="reportFullscreenLayer dslm-print-root"
+      >
+        <header class="reportFsToolbar">
+          <div class="reportFsTitle">治愈报告 · {{ active?.name || '未命名' }}</div>
+          <div class="reportFsActions">
+            <n-button quaternary :loading="pdfExporting" @click="exportReportPdf">导出 PDF</n-button>
+            <n-button type="primary" @click="exitReportFullscreen">返回 · 重测或换档案</n-button>
+          </div>
+        </header>
+        <div class="reportFsScroll">
+          <ReportView :markdown="detail.report.report_markdown" layout="fullscreen" />
+        </div>
+      </div>
+    </Teleport>
   </n-config-provider>
 </template>
 

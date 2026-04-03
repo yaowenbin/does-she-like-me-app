@@ -19,6 +19,8 @@ export type ArchiveDetail = {
   }
 }
 
+import { deviceHeaders } from './device'
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL?.toString().replace(/\/$/, '') || ''
 
 function url(path: string) {
@@ -26,17 +28,35 @@ function url(path: string) {
   return API_BASE ? `${API_BASE}${p}` : p
 }
 
+function formatHttpErrorBody(text: string): string {
+  try {
+    const j = JSON.parse(text) as { detail?: unknown }
+    if (j?.detail != null) {
+      return typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)
+    }
+  } catch {
+    /* 非 JSON */
+  }
+  return text
+}
+
 async function jsonFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const method = (init.method || 'GET').toUpperCase()
+  const headers: Record<string, string> = {
+    ...deviceHeaders(),
+    ...(init.headers as Record<string, string> | undefined),
+  }
+  if (method !== 'GET' && method !== 'HEAD') {
+    headers['Content-Type'] = headers['Content-Type'] || 'application/json'
+  }
   const res = await fetch(url(path), {
     ...init,
-    headers: {
-      ...(init.headers || {}),
-      'Content-Type': 'application/json',
-    },
+    headers,
   })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`HTTP ${res.status}: ${text || res.statusText}`)
+    const detail = formatHttpErrorBody(text)
+    throw new Error(`HTTP ${res.status}: ${detail || res.statusText}`)
   }
   return (await res.json()) as T
 }
@@ -72,6 +92,7 @@ export async function importWxTxt(archiveId: string, file: File): Promise<any> {
 
   const res = await fetch(url(`/api/archives/${archiveId}/import/wx-txt`), {
     method: 'POST',
+    headers: deviceHeaders(),
     body: form,
   })
   if (!res.ok) {
@@ -110,6 +131,7 @@ export async function importOcr(
 
   const res = await fetch(url(`/api/archives/${archiveId}/import/ocr${qs}`), {
     method: 'POST',
+    headers: deviceHeaders(),
     body: form,
   })
   if (!res.ok) {
@@ -127,5 +149,38 @@ export async function analyzeArchive(
     method: 'POST',
     body: JSON.stringify(input),
   })
+}
+
+export type EntitlementsMe = {
+  device_id: string
+  credits: number
+  oa_follow_bonus_claimed: boolean
+  entitlements_enforced: boolean
+}
+
+export async function getEntitlementsMe(): Promise<EntitlementsMe> {
+  return jsonFetch('/api/entitlements/me')
+}
+
+export async function redeemGiftCode(code: string): Promise<{ ok: boolean; added: number; credits: number }> {
+  return jsonFetch('/api/entitlements/redeem', {
+    method: 'POST',
+    body: JSON.stringify({ code }),
+  })
+}
+
+export async function getWechatScene(): Promise<{ short_code: string; hint: string }> {
+  return jsonFetch('/api/entitlements/wechat-scene')
+}
+
+export async function downloadReportPdf(archiveId: string): Promise<Blob> {
+  const res = await fetch(url(`/api/archives/${archiveId}/export/pdf`), {
+    headers: deviceHeaders(),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`HTTP ${res.status}: ${formatHttpErrorBody(text) || res.statusText}`)
+  }
+  return await res.blob()
 }
 

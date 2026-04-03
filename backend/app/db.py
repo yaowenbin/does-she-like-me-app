@@ -76,6 +76,9 @@ class Database:
                 )
                 """
             )
+            from .entitlements_db import init_entitlements_schema
+
+            init_entitlements_schema(self.db_path)
 
     def create_archive(
         self,

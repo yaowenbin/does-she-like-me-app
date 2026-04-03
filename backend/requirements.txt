@@ -8,4 +8,7 @@ python-multipart
 httpx
 pillow
 pytesseract
+easyocr
+markdown
+playwright
 
