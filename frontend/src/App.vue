@@ -874,7 +874,12 @@ watch(reportFullscreen, (v) => {
         <header class="reportFsToolbar">
           <div class="reportFsTitle">治愈报告 · {{ active?.name || '未命名' }}</div>
           <div class="reportFsActions">
-            <n-button quaternary :loading="pdfExporting" @click="exportReportPdf">导出 PDF</n-button>
+            <div class="pdfExportBtnWrap">
+              <n-button quaternary :disabled="pdfExporting" class="pdfExportBtn" @click="exportReportPdf">
+                导出 PDF
+              </n-button>
+              <div v-if="pdfExporting" class="pdfExportBtnSpinner" aria-hidden="true"></div>
+            </div>
             <n-button type="primary" @click="exitReportFullscreen">返回 · 重测或换档案</n-button>
           </div>
         </header>

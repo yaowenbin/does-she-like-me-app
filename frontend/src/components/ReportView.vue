@@ -212,7 +212,21 @@ function initCharts() {
 
   const behaviorOption: any = {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item', confine: true },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: 'rgba(240,98,146,0.35)',
+      borderWidth: 1,
+      padding: [10, 12],
+      textStyle: {
+        color: 'rgba(31,26,34,0.94)',
+        fontFamily: 'Nunito Sans, ui-sans-serif, system-ui',
+        fontWeight: 800,
+        fontSize: 12,
+      },
+      extraCssText: 'box-shadow:0 18px 50px rgba(240,98,146,0.18);backdrop-filter: blur(10px);',
+    },
     radar: {
       center: ['50%', '53%'],
       indicator: bIndicators.map((n) => ({ name: n, max: 5 })),
@@ -253,7 +267,21 @@ function initCharts() {
   const lensValues = lensRadar.value.values
   const lensOption: any = {
     backgroundColor: 'transparent',
-    tooltip: { trigger: 'item', confine: true },
+    tooltip: {
+      trigger: 'item',
+      confine: true,
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: 'rgba(169,139,255,0.35)',
+      borderWidth: 1,
+      padding: [10, 12],
+      textStyle: {
+        color: 'rgba(31,26,34,0.94)',
+        fontFamily: 'Nunito Sans, ui-sans-serif, system-ui',
+        fontWeight: 800,
+        fontSize: 12,
+      },
+      extraCssText: 'box-shadow:0 18px 50px rgba(169,139,255,0.18);backdrop-filter: blur(10px);',
+    },
     radar: {
       center: ['50%', '53%'],
       indicator: lensOrder.map((id) => ({ name: id, max: 5 })),

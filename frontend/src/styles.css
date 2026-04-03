@@ -279,6 +279,37 @@ textarea {
   margin-top: 12px;
 }
 
+/* Naive UI 统一圆角 + hover/focus 阴影节奏（对标一流 C 端） */
+.n-button {
+  border-radius: 12px;
+  transition:
+    box-shadow 180ms ease,
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.n-button:hover {
+  box-shadow: 0 14px 36px rgba(240, 98, 146, 0.18);
+}
+
+.n-button:focus-visible {
+  outline: 2px solid rgba(240, 98, 146, 0.55);
+  outline-offset: 2px;
+}
+
+.n-input,
+.n-input-number,
+.n-select,
+.n-textarea {
+  border-radius: 12px;
+}
+
+.n-input-wrapper:focus-within,
+.n-select:focus-within {
+  box-shadow: 0 0 0 4px rgba(240, 98, 146, 0.12);
+}
+
 .healNotice {
   border: 1px solid rgba(255, 127, 181, 0.35);
   background: linear-gradient(
@@ -375,9 +406,9 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  max-height: 72vh;
-  overflow-y: auto;
-  padding-right: 4px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .reportProCol--charts .sectionTitle {
@@ -398,9 +429,9 @@ textarea {
 }
 
 .evidenceList--scroll {
-  max-height: 42vh;
-  overflow-y: auto;
-  padding-right: 4px;
+  max-height: none;
+  overflow: visible;
+  padding-right: 0;
 }
 
 .twoCol {
@@ -737,6 +768,48 @@ textarea {
   border-bottom: 1px solid rgba(31, 26, 34, 0.1);
   background: rgba(255, 255, 255, 0.92);
   backdrop-filter: blur(10px);
+}
+
+.reportFsActions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.pdfExportBtnWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  height: 34px;
+}
+
+.pdfExportBtn {
+  min-width: 108px;
+  height: 34px;
+}
+
+.pdfExportBtnSpinner {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin-left: -9px;
+  margin-top: -9px;
+  border-radius: 50%;
+  border: 2px solid rgba(240, 98, 146, 0.25);
+  border-top-color: rgba(240, 98, 146, 0.95);
+  animation: dslmSpin 0.8s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes dslmSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .reportFsTitle {
