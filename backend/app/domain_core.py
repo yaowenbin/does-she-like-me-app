@@ -120,17 +120,24 @@ def score_from_signal(
     risk_hits = float(m.get("risk_hits") or 0.0)
     other_msg_ratio = float(m.get("other_message_ratio") or 0.0)
     dialog_turns = float(m.get("dialog_turns") or 0.0)
+    proposal_hits = float(m.get("proposal_hits") or 0.0)
+    cost_hits = float(m.get("cost_hits") or 0.0)
+    boundary_hits = float(m.get("boundary_hits") or 0.0)
+    public_hits = float(m.get("public_hits") or 0.0)
+    first_counterparty = float(m.get("first_counterparty") or 0.0)
+    nickname_hits = float(m.get("nickname_hits") or 0.0)
+    we_hits = float(m.get("we_hits") or 0.0)
 
-    s1 = _to_1_5(min(1.0, (other_msg_ratio * 0.8 + ask_ratio * 0.6)))
-    s2 = _to_1_5(min(1.0, (care_hits / max(6.0, dialog_turns * 0.08))))
-    s3 = _to_1_5(min(1.0, (exclusive_hits / max(3.0, dialog_turns * 0.04))))
-    s4 = _to_1_5(min(1.0, (coverage * 0.7 + min(dialog_turns / 120.0, 1.0) * 0.3)))
-    s5 = _to_1_5(min(1.0, ((m.get("nickname_hits") or 0) + (m.get("we_hits") or 0)) / max(6.0, dialog_turns * 0.08)))
-    s6 = _to_1_5(min(1.0, (future_hits / max(4.0, dialog_turns * 0.06))))
-    s7 = _to_1_5(min(1.0, (social_hits / max(3.0, dialog_turns * 0.05))))
+    s1 = _clamp(1.0 + proposal_hits * 0.6 + ask_ratio * 1.5 + first_counterparty * 0.5)
+    s2 = _clamp(1.0 + care_hits * 0.8 + ask_ratio * 1.2 + (0.4 if risk_hits == 0 else 0.0))
+    s3 = _clamp(1.0 + exclusive_hits * 0.5 + boundary_hits * 0.4 + public_hits * 0.5 - (0.6 if risk_hits > 0 else 0.0))
+    s4 = _clamp(1.0 + coverage * 2.0 + min(dialog_turns / 20.0, 1.0) * 1.2 + (1.0 - min(risk_hits / 3.0, 1.0)) * 1.2)
+    s5 = _clamp(1.0 + nickname_hits * 0.8 + we_hits * 0.4 + ask_ratio * 0.7)
+    s6 = _clamp(1.0 + cost_hits * 0.35 + proposal_hits * 0.35 + future_hits * 0.2)
+    s7 = _clamp(1.0 + social_hits * 0.9 + public_hits * 0.8)
     s8 = _to_1_5(0.55 if str((signal.get("profile") or "")).strip() else 0.35)
     s9 = _to_1_5(0.6 if str((signal.get("relation_stage") or "")).strip() and str((signal.get("context_scene") or "")).strip() else 0.35)
-    s10 = _clamp(5.0 - min(3.8, risk_hits * 1.2 + len(anomalies) * 0.7))
+    s10 = _clamp(5.0 - min(4.2, risk_hits * 1.3 + len(anomalies) * 0.65))
 
     skill_scores: Dict[str, float] = {
         "S1": round(s1, 2),
@@ -147,7 +154,10 @@ def score_from_signal(
 
     weights = _adjust_weights(DEFAULT_WEIGHTS, signal, weight_delta)
     total_1_5 = sum(skill_scores[k] * weights[k] for k in SKILL_IDS)
-    total_score = int(round((total_1_5 - 1.0) / 4.0 * 100))
+    raw_score = (total_1_5 - 1.0) / 4.0 * 100
+    if raw_score > 65:
+        raw_score = raw_score + (raw_score - 65) * 0.5
+    total_score = int(round(raw_score))
     total_score = max(0, min(100, total_score))
     level = _band(total_1_5)
     conf = _confidence(coverage)

@@ -113,6 +113,7 @@ const opsDays = ref(30)
 const opsDeviceId = ref('')
 const opsDeltaInput = ref('S1=0.01\nS3=0.01\nS10=0.005')
 const capabilityConfig = ref<CapabilityConfig | null>(null)
+const adminView = ref<'codes' | 'feedback' | 'tuning'>('codes')
 
 const filteredRows = computed(() => {
   let list = rows.value
@@ -735,8 +736,14 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="opsGrid">
-            <n-card class="sectionCard">
+          <div class="opsNav">
+            <n-button :type="adminView === 'codes' ? 'primary' : 'default'" secondary @click="adminView = 'codes'">卡密运营</n-button>
+            <n-button :type="adminView === 'feedback' ? 'primary' : 'default'" secondary @click="adminView = 'feedback'">反馈统计</n-button>
+            <n-button :type="adminView === 'tuning' ? 'primary' : 'default'" secondary @click="adminView = 'tuning'">调优配置</n-button>
+          </div>
+
+          <div class="opsGrid" v-if="adminView !== 'codes'">
+            <n-card class="sectionCard" v-if="adminView === 'feedback'">
               <template #header>
                 <div class="sectionHead">
                   <span class="adminEyebrow adminEyebrow--onCard">Feedback Ops</span>
@@ -763,7 +770,7 @@ onMounted(async () => {
               </div>
             </n-card>
 
-            <n-card class="sectionCard">
+            <n-card class="sectionCard" v-if="adminView === 'tuning'">
               <template #header>
                 <div class="sectionHead">
                   <span class="adminEyebrow adminEyebrow--onCard">Tuning Ops</span>
@@ -795,6 +802,7 @@ onMounted(async () => {
             </n-card>
           </div>
 
+          <template v-if="adminView === 'codes'">
           <n-card class="sectionCard sectionCard--accent">
             <template #header>
               <div class="sectionHead">
@@ -933,6 +941,7 @@ onMounted(async () => {
               />
             </div>
           </n-card>
+          </template>
         </template>
       </div>
 
@@ -1186,6 +1195,13 @@ onMounted(async () => {
   grid-template-columns: 1.3fr 1fr;
   gap: 12px;
   margin-bottom: 1.25rem;
+}
+
+.opsNav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 12px;
 }
 
 @media (max-width: 1080px) {

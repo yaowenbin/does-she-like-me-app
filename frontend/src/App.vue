@@ -723,13 +723,34 @@ const creditsNeededForAnalyze = computed(() => {
   return form.deepReasoning ? 1 + deepExtraCredits.value : 1
 })
 
+const hasUploadedMaterial = computed(() => {
+  if (detail.value?.archive?.has_upload) return true
+  if (analyzePlan.value?.has_upload) return true
+  if (txtState.imported) return true
+  if (pasteState.importedSize > 0) return true
+  if (ocrState.importedSize > 0) return true
+  return false
+})
+
 const canAnalyze = computed(() => {
-  if (!detail.value?.archive?.has_upload) return false
+  if (!hasUploadedMaterial.value) return false
   if (analyzePlan.value && !analyzePlan.value.can_analyze) return false
   if (entitlements.value?.entitlements_enforced) {
     if (entitlements.value.credits < creditsNeededForAnalyze.value) return false
   }
   return true
+})
+
+const analyzeDisabledReason = computed(() => {
+  if (!activeId.value) return '请先创建或选择一个档案'
+  if (!hasUploadedMaterial.value) return '请先导入聊天材料（TXT / 粘贴 / OCR）'
+  if (analyzePlan.value && !analyzePlan.value.can_analyze) {
+    return analyzePlan.value.blockers?.[0] || '当前条件不满足，请先处理阻塞项'
+  }
+  if (entitlements.value?.entitlements_enforced && entitlements.value.credits < creditsNeededForAnalyze.value) {
+    return `分析次数不足：当前 ${entitlements.value.credits}，需要 ${creditsNeededForAnalyze.value}`
+  }
+  return ''
 })
 
 const pipelineStepLabels: Record<string, string> = {
@@ -1128,6 +1149,9 @@ watch(reportFullscreen, (v) => {
             >
               {{ reportGenerating ? '正在生成…' : '调用 DeepSeek 生成报告' }}
             </n-button>
+            <div v-if="!canAnalyze && analyzeDisabledReason" class="muted tiny" style="margin-top: 8px">
+              {{ analyzeDisabledReason }}
+            </div>
           </div>
 
           <div v-else class="muted">

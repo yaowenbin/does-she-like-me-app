@@ -7,19 +7,36 @@ from typing import Any, Dict, List, Tuple
 
 
 _QUESTION_RE = re.compile(r"[?？]")
-_CARE_RE = re.compile(r"(辛苦|累吗|别难过|抱抱|早点休息|注意身体|开心|加油|想你|担心)")
+_CARE_RE = re.compile(r"(辛苦|累吗|别难过|抱抱|抱抱你|早点休息|注意身体|开心|加油|想你|担心|别紧张|我听你|我就知道你可以|你放心|庆祝)")
 _FUTURE_RE = re.compile(r"(周末|下次|以后|一起|见面|约|带你|我们)")
 _EXCLUSIVE_RE = re.compile(r"(只对你|只和你|不想别人|边界|暧昧|专属|公开|介绍朋友|见家人)")
-_SOCIAL_RE = re.compile(r"(朋友|家人|同事|朋友圈|抖音|公开)")
-_RISK_RE = re.compile(r"(借钱|转账|帮我做|深夜emo|别问|别管|别公开|别告诉别人)")
+_SOCIAL_RE = re.compile(r"(朋友圈|见朋友|见家人|介绍朋友|公开|我跟他们说)")
+_RISK_RE = re.compile(r"(借钱|借我|转账|转我|帮我做|深夜emo|别问|别管|别公开|别告诉别人|明天还你)")
 _NICKNAME_RE = re.compile(r"(宝|宝宝|宝贝|亲爱的|小可爱|笨蛋|乖)")
 _WE_RE = re.compile(r"(我们)")
+_ROLE_RE = re.compile(r"^\s*(我|对方|Ta|TA|她|他|你|女方|男方|A|B)\s*[：:]\s*(.+)$")
+_PROPOSAL_RE = re.compile(r"(要不要|我们.*(去|吃|见|约)|我订了|我在你家楼下|一起庆祝|下周末)")
+_COST_RE = re.compile(r"(早起|送|订了|买了|陪你|提前走|查了|记着|记得|特意)")
+_BOUNDARY_RE = re.compile(r"(我跟他们说|提前走了|拒绝|只陪你|你放心)")
+_PUBLIC_RE = re.compile(r"(朋友圈|见朋友|见家人|我跟他们说)")
 
 
 def _parse_line(line: str) -> Tuple[str, str, str]:
+    m = _ROLE_RE.match(line.strip())
+    if m:
+        role = m.group(1).strip()
+        content = m.group(2).strip()
+        sender = "self" if role in ("我",) else "counterparty"
+        return "na", sender, content
     parts = [p.strip() for p in line.split("|")]
     if len(parts) >= 3:
-        return parts[0], parts[1], "|".join(parts[2:]).strip()
+        sender_raw = parts[1]
+        sender = sender_raw
+        if sender_raw in ("我", "self", "me"):
+            sender = "self"
+        elif sender_raw in ("对方", "ta", "TA", "她", "他", "counterparty"):
+            sender = "counterparty"
+        return parts[0], sender, "|".join(parts[2:]).strip()
     return "na", "unknown", line.strip()
 
 
@@ -35,6 +52,10 @@ def _parse_time(ts: str) -> datetime | None:
 
 
 def _guess_counterparty(senders: Counter[str]) -> str:
+    if "counterparty" in senders:
+        return "counterparty"
+    if "self" in senders and len(senders) == 1:
+        return "unknown"
     if not senders:
         return "unknown"
     common = [s for s, _ in senders.most_common(3)]
@@ -68,16 +89,23 @@ def extract_input_signal(
         }
 
     other_msgs = [p for p in parsed if p[1] == counterparty]
+    other_contents = [p[2] for p in other_msgs]
     other_text = "\n".join(p[2] for p in other_msgs)
     all_text = "\n".join(p[2] for p in parsed)
     ask_hits = sum(1 for _, _, c in other_msgs if _QUESTION_RE.search(c))
-    care_hits = len(_CARE_RE.findall(other_text))
-    future_hits = len(_FUTURE_RE.findall(other_text))
-    exclusive_hits = len(_EXCLUSIVE_RE.findall(other_text))
-    social_hits = len(_SOCIAL_RE.findall(other_text))
-    risk_hits = len(_RISK_RE.findall(other_text))
-    nickname_hits = len(_NICKNAME_RE.findall(other_text))
-    we_hits = len(_WE_RE.findall(other_text))
+    care_hits = sum(1 for c in other_contents if _CARE_RE.search(c))
+    future_hits = sum(1 for c in other_contents if _FUTURE_RE.search(c))
+    exclusive_hits = sum(1 for c in other_contents if _EXCLUSIVE_RE.search(c))
+    social_hits = sum(1 for c in other_contents if _SOCIAL_RE.search(c))
+    risk_hits = sum(1 for c in other_contents if _RISK_RE.search(c))
+    nickname_hits = sum(1 for c in other_contents if _NICKNAME_RE.search(c))
+    we_hits = sum(1 for c in other_contents if _WE_RE.search(c))
+    proposal_hits = sum(1 for c in other_contents if _PROPOSAL_RE.search(c))
+    cost_hits = sum(1 for c in other_contents if _COST_RE.search(c))
+    boundary_hits = sum(1 for c in other_contents if _BOUNDARY_RE.search(c))
+    public_hits = sum(1 for c in other_contents if _PUBLIC_RE.search(c))
+    first_sender = parsed[0][1] if parsed else "unknown"
+    first_counterparty = 1 if first_sender == counterparty else 0
 
     known_time = 0
     reply_samples = 0
@@ -122,6 +150,11 @@ def extract_input_signal(
         "risk_hits": risk_hits,
         "nickname_hits": nickname_hits,
         "we_hits": we_hits,
+        "proposal_hits": proposal_hits,
+        "cost_hits": cost_hits,
+        "boundary_hits": boundary_hits,
+        "public_hits": public_hits,
+        "first_counterparty": first_counterparty,
         "avg_reply_mins": round(avg_reply_mins, 2),
         "coverage_ratio": round(coverage_ratio, 4),
         "counterparty_sender": counterparty,
