@@ -81,12 +81,36 @@ def sanitize_ai_trace(report_markdown: str) -> str:
     # 2) 去掉“综合区间：**（多重加粗）综合区间：”的额外加粗嵌套（更保守）
     t = re.sub(r"\*\*(\s*)综合区间[:：]\s*", r"\1综合区间：", t)
 
-    # 3) 连续重复行去重（保留第一条）
+    # 3) 去掉明显泄露的“lens 提示免责声明句”（防止把规则文本当正文输出）
+    #    只做包含关键短语的跳行，避免误伤其它内容。
+    lens_leak_markers = (
+        # 通用免责声明/科普提示
+        "仅作修辞与思想实验",
+        "非基因检测",
+        "非个体基因判决",
+        "科普级框架",
+        "非心理咨询",
+        "禁止单一真理",
+        "可有多种译本",
+        # 文化/占星透镜专用的模板句
+        "本透镜跳过",
+        "占星并非科学",
+        "仅作文化修辞对照",
+    )
     lines = t.splitlines()
     out: list[str] = []
     last = None
     for ln in lines:
         s = ln.strip()
+        if not s:
+            out.append(ln)
+            continue
+
+        # 跳过提示泄露的“免责声明模板句”
+        if any(m in s for m in lens_leak_markers):
+            continue
+
+        # 连续重复行去重（保留第一条）
         if s and s == last:
             continue
         out.append(ln)
@@ -96,7 +120,16 @@ def sanitize_ai_trace(report_markdown: str) -> str:
     # 4) 空行归一：最多两连空行
     t = re.sub(r"\n{3,}", "\n\n", t)
 
-    # 5) 去掉尾部多余空白
-    t = t.strip()
-    return t
+    # 5) 修复 md 加粗符号孤立/不平衡（防止前端出现裸 **）
+    # 5.1 行尾孤立 '**' 直接去掉
+    t = re.sub(r"\*\*\s*$", "", t, flags=re.MULTILINE)
+
+    # 5.2 全局 '**' 奇数个：将最后一个加粗标记转义，避免配对错误
+    bold_positions = [m.start() for m in re.finditer(r"\*\*", t)]
+    if len(bold_positions) % 2 == 1 and bold_positions:
+        last_pos = bold_positions[-1]
+        t = t[:last_pos] + r"\*\*" + t[last_pos + 2 :]
+
+    # 6) 去掉尾部多余空白
+    return t.strip()
 
