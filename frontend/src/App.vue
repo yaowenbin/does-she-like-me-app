@@ -18,6 +18,8 @@ import {
   analyzeArchive,
   createArchive,
   downloadReportPdf,
+  getDeviceTuningSnapshot,
+  getRecentFeedbackTimeline,
   getAnalyzePlan,
   getAnalyzeFeatures,
   getArchiveDetail,
@@ -28,12 +30,15 @@ import {
   importOcr,
   listArchives,
   redeemGiftCode,
+  resetDeviceTuning,
   submitReportFeedback,
   type AnalyzePlan,
   type AnalyzeFeatures,
   type ArchiveSummary,
   type AnalyzeResultDto,
+  type DeviceTuningSnapshot,
   type EntitlementsMe,
+  type ReportFeedbackTimeline,
 } from './api'
 import AdminPanel from './components/AdminPanel.vue'
 import ReportView from './components/ReportView.vue'
@@ -59,6 +64,9 @@ const scoringResult = ref<Record<string, any> | null>(null)
 const friendlySummary = ref<Record<string, any> | null>(null)
 const feedbackBusy = ref(false)
 const feedbackMsg = ref<string | null>(null)
+const feedbackTimeline = ref<ReportFeedbackTimeline | null>(null)
+const tuningSnapshot = ref<DeviceTuningSnapshot | null>(null)
+const resetTuningBusy = ref(false)
 const redeemForm = reactive({ code: '' })
 const redeemFormRef = ref<FormInst | null>(null)
 const wechatShortCode = ref('')
@@ -334,6 +342,7 @@ async function refreshDetail() {
   scoringResult.value = (detail.value.report as any)?.scoring?.scoring_result || null
   friendlySummary.value = (detail.value.report as any)?.scoring?.friendly_summary || null
   await refreshAnalyzePlan()
+  await refreshFeedbackTimeline()
 }
 
 function onWxTxtPicked(e: Event) {
@@ -533,6 +542,8 @@ async function onSubmitFeedback(verdict: 'accurate' | 'inaccurate') {
   try {
     const res = await submitReportFeedback(activeId.value, { verdict })
     feedbackMsg.value = res.message
+    await refreshFeedbackTimeline()
+    await refreshTuningSnapshot()
     toast.success(verdict === 'accurate' ? '感谢反馈，我们会保持这个判断风格' : '收到，我们会自动调低这类判断权重')
   } catch (e: any) {
     if (!axios.isAxiosError(e)) {
@@ -540,6 +551,41 @@ async function onSubmitFeedback(verdict: 'accurate' | 'inaccurate') {
     }
   } finally {
     feedbackBusy.value = false
+  }
+}
+
+async function refreshFeedbackTimeline() {
+  if (!activeId.value) {
+    feedbackTimeline.value = null
+    return
+  }
+  try {
+    feedbackTimeline.value = await getRecentFeedbackTimeline(activeId.value, 10)
+  } catch {
+    feedbackTimeline.value = null
+  }
+}
+
+async function refreshTuningSnapshot() {
+  try {
+    tuningSnapshot.value = await getDeviceTuningSnapshot()
+  } catch {
+    tuningSnapshot.value = null
+  }
+}
+
+async function onResetTuning() {
+  if (resetTuningBusy.value) return
+  resetTuningBusy.value = true
+  try {
+    const res = await resetDeviceTuning()
+    await refreshTuningSnapshot()
+    feedbackMsg.value = `已重置调优权重（清除 ${res.cleared} 项）`
+    toast.success('个人调优权重已重置')
+  } catch (e: any) {
+    if (!axios.isAxiosError(e)) feedbackMsg.value = e?.message || '重置失败'
+  } finally {
+    resetTuningBusy.value = false
   }
 }
 
@@ -605,6 +651,7 @@ async function refreshEntitlements() {
     }
     await refreshAnalyzeFeatures()
     await refreshAnalyzePlan()
+    await refreshTuningSnapshot()
   } catch {
     entitlements.value = null
   }
@@ -709,6 +756,7 @@ watch(
   () => activeId.value,
   (id) => {
     if (id) localStorage.setItem('dslm_active_id_v1', id)
+    void refreshFeedbackTimeline()
   }
 )
 
@@ -1121,8 +1169,38 @@ watch(reportFullscreen, (v) => {
               <span class="muted tiny">这次判断对你有帮助吗？</span>
               <n-button size="tiny" :disabled="feedbackBusy || uiBusy" @click="onSubmitFeedback('accurate')">更准</n-button>
               <n-button size="tiny" :disabled="feedbackBusy || uiBusy" @click="onSubmitFeedback('inaccurate')">不太准</n-button>
+              <n-button
+                size="tiny"
+                type="warning"
+                ghost
+                :disabled="resetTuningBusy || uiBusy"
+                @click="onResetTuning"
+              >
+                重置个人调优权重
+              </n-button>
             </div>
             <div v-if="feedbackMsg" class="feedbackMsg">{{ feedbackMsg }}</div>
+
+            <div v-if="feedbackTimeline" class="feedbackTimelineCard">
+              <div class="feedbackTimelineHead">
+                <b>最近10次反馈时间线</b>
+                <span class="muted tiny">
+                  准：{{ feedbackTimeline.accurate_count }} · 不太准：{{ feedbackTimeline.inaccurate_count }}
+                </span>
+              </div>
+              <div v-if="feedbackTimeline.items.length === 0" class="muted tiny">还没有反馈记录，你的点击会直接参与后续调优。</div>
+              <div v-for="(f, idx) in feedbackTimeline.items" :key="`${f.created_at}-${idx}`" class="feedbackTimelineItem">
+                <span class="feedbackVerdict" :class="f.verdict === 'accurate' ? 'feedbackVerdict--ok' : 'feedbackVerdict--bad'">
+                  {{ f.verdict === 'accurate' ? '更准' : '不太准' }}
+                </span>
+                <span class="muted tiny">{{ new Date(f.created_at).toLocaleString() }}</span>
+                <span v-if="f.note" class="muted tiny">（{{ f.note }}）</span>
+              </div>
+            </div>
+
+            <div v-if="tuningSnapshot" class="tuningSnapshot">
+              当前已生效调优项：{{ tuningSnapshot.updated_skills }} 个
+            </div>
           </div>
 
           <div v-if="scoringResult" class="scoreBrief">
@@ -1327,6 +1405,41 @@ watch(reportFullscreen, (v) => {
   margin-top: 6px;
   font-size: 12px;
   color: #7d4a00;
+}
+.feedbackTimelineCard {
+  margin-top: 10px;
+  border-radius: 10px;
+  padding: 10px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.feedbackTimelineHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.feedbackTimelineItem + .feedbackTimelineItem {
+  margin-top: 6px;
+}
+.feedbackVerdict {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 7px;
+  margin-right: 6px;
+}
+.feedbackVerdict--ok {
+  color: #1d6f42;
+  background: rgba(46, 204, 113, 0.18);
+}
+.feedbackVerdict--bad {
+  color: #8b2942;
+  background: rgba(240, 98, 146, 0.2);
+}
+.tuningSnapshot {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6c6c6c;
 }
 .appFooterHint {
   margin-top: 14px;

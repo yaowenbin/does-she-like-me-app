@@ -423,3 +423,45 @@ class Database:
                     """,
                     (did, str(skill_id), float(delta), now),
                 )
+
+    def list_recent_feedback(
+        self,
+        *,
+        archive_id: str,
+        device_id: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        lim = max(1, min(50, int(limit)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT archive_id, verdict, note, created_at
+                FROM report_feedback
+                WHERE archive_id = ? AND device_id = ?
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (archive_id, (device_id or "").strip(), lim),
+            ).fetchall()
+            out: List[Dict[str, Any]] = []
+            for r in rows:
+                out.append(
+                    {
+                        "archive_id": str(r["archive_id"]),
+                        "verdict": str(r["verdict"]),
+                        "note": str(r["note"] or ""),
+                        "created_at": str(r["created_at"]),
+                    }
+                )
+            return out
+
+    def reset_device_weight_tuning(self, device_id: str) -> int:
+        did = (device_id or "").strip()
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM device_weight_tuning WHERE device_id = ?
+                """,
+                (did,),
+            )
+            return int(cur.rowcount or 0)

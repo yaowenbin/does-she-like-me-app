@@ -105,6 +105,30 @@ class ReportFeedbackResponse(BaseModel):
     tuned_weights: Dict[str, float] = Field(default_factory=dict)
 
 
+class ReportFeedbackItem(BaseModel):
+    archive_id: str
+    verdict: str
+    note: str = ""
+    created_at: str
+
+
+class ReportFeedbackTimelineResponse(BaseModel):
+    archive_id: str
+    items: List[ReportFeedbackItem] = Field(default_factory=list)
+    accurate_count: int = 0
+    inaccurate_count: int = 0
+
+
+class DeviceTuningSnapshotResponse(BaseModel):
+    tuned_weights: Dict[str, float] = Field(default_factory=dict)
+    updated_skills: int = 0
+
+
+class DeviceTuningResetResponse(BaseModel):
+    ok: bool
+    cleared: int
+
+
 class RedeemRequest(BaseModel):
     code: str = ""
 

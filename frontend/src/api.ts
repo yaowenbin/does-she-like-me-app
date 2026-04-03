@@ -144,6 +144,25 @@ export type ReportFeedbackResponse = {
   tuned_weights: Record<string, number>
 }
 
+export type ReportFeedbackItem = {
+  archive_id: string
+  verdict: 'accurate' | 'inaccurate'
+  note: string
+  created_at: string
+}
+
+export type ReportFeedbackTimeline = {
+  archive_id: string
+  items: ReportFeedbackItem[]
+  accurate_count: number
+  inaccurate_count: number
+}
+
+export type DeviceTuningSnapshot = {
+  tuned_weights: Record<string, number>
+  updated_skills: number
+}
+
 export async function getAnalyzeFeatures(): Promise<AnalyzeFeatures> {
   const { data } = await http.get<AnalyzeFeatures>('/api/config/analyze', {
     skipGlobalErrorMessage: true,
@@ -178,6 +197,29 @@ export async function submitReportFeedback(
     verdict: input.verdict,
     note: input.note || '',
   })
+  return data
+}
+
+export async function getRecentFeedbackTimeline(
+  archiveId: string,
+  limit = 10
+): Promise<ReportFeedbackTimeline> {
+  const { data } = await http.get<ReportFeedbackTimeline>(`/api/archives/${archiveId}/feedback/recent`, {
+    params: { limit },
+    skipGlobalErrorMessage: true,
+  })
+  return data
+}
+
+export async function getDeviceTuningSnapshot(): Promise<DeviceTuningSnapshot> {
+  const { data } = await http.get<DeviceTuningSnapshot>('/api/feedback/tuning', {
+    skipGlobalErrorMessage: true,
+  })
+  return data
+}
+
+export async function resetDeviceTuning(): Promise<{ ok: boolean; cleared: number }> {
+  const { data } = await http.delete<{ ok: boolean; cleared: number }>('/api/feedback/tuning/reset')
   return data
 }
 

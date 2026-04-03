@@ -43,8 +43,12 @@ from .models import (
     EntitlementsMeResponse,
     PasteImportRequest,
     RedeemRequest,
+    DeviceTuningResetResponse,
+    DeviceTuningSnapshotResponse,
+    ReportFeedbackItem,
     ReportFeedbackRequest,
     ReportFeedbackResponse,
+    ReportFeedbackTimelineResponse,
     TraceStepModel,
     UsageStepModel,
     WechatSceneResponse,
@@ -403,6 +407,47 @@ def submit_report_feedback(
         message=message,
         tuned_weights=tuned,
     )
+
+
+@app.get("/api/archives/{archive_id}/feedback/recent", response_model=ReportFeedbackTimelineResponse)
+def recent_feedback_timeline(
+    archive_id: str,
+    limit: int = 10,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> ReportFeedbackTimelineResponse:
+    did = _require_x_device_id(x_device_id)
+    _archive_belonging_to_device(db, archive_id, did)
+    rows = db.list_recent_feedback(archive_id=archive_id, device_id=did, limit=limit)
+    items = [ReportFeedbackItem(**r) for r in rows]
+    accurate_count = sum(1 for r in items if r.verdict == "accurate")
+    inaccurate_count = sum(1 for r in items if r.verdict == "inaccurate")
+    return ReportFeedbackTimelineResponse(
+        archive_id=archive_id,
+        items=items,
+        accurate_count=accurate_count,
+        inaccurate_count=inaccurate_count,
+    )
+
+
+@app.get("/api/feedback/tuning", response_model=DeviceTuningSnapshotResponse)
+def get_device_tuning(
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> DeviceTuningSnapshotResponse:
+    did = _require_x_device_id(x_device_id)
+    tuned = db.get_device_weight_tuning(did)
+    return DeviceTuningSnapshotResponse(
+        tuned_weights=tuned,
+        updated_skills=len(tuned),
+    )
+
+
+@app.delete("/api/feedback/tuning/reset", response_model=DeviceTuningResetResponse)
+def reset_device_tuning(
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> DeviceTuningResetResponse:
+    did = _require_x_device_id(x_device_id)
+    cleared = db.reset_device_weight_tuning(did)
+    return DeviceTuningResetResponse(ok=True, cleared=cleared)
 
 
 @app.get("/api/entitlements/me", response_model=EntitlementsMeResponse)
