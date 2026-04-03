@@ -4,7 +4,12 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import * as echarts from 'echarts'
 
-type LensSection = { lensTag: string; lensId: 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'L6'; content: string }
+type LensSection = {
+  lensTag: string
+  lensId: 'L1' | 'L2' | 'L3' | 'L4' | 'L5' | 'L6'
+  content: string
+  l6Panels?: { A: string; B: string; C: string; D: string }
+}
 
 const props = withDefaults(
   defineProps<{
@@ -188,12 +193,37 @@ function parseLensStrengthTable(md: string): LensStrengthRow[] {
   return rows
 }
 
+function parseL6ABCDSections(content: string): { A: string; B: string; C: string; D: string } {
+  const md = content || ''
+  const get = (key: 'A' | 'B' | 'C' | 'D', lookAheadKeys: Array<'A' | 'B' | 'C' | 'D'>) => {
+    const nextHeadingPart = lookAheadKeys.length ? `(?:${lookAheadKeys.join('|')})` : ''
+    const endLookahead =
+      lookAheadKeys.length ? `(?=^###\\s*(?:${nextHeadingPart})\\b|$)` : `(?=^##\\s|^---\\s*$|$)`
+    const re = new RegExp(`^###\\s*${key}\\b[^\\n]*\\n([\\s\\S]*?)${endLookahead}`, 'm')
+    const m = md.match(re)
+    return (m?.[1] || '').trim()
+  }
+
+  return {
+    A: get('A', ['B', 'C', 'D']),
+    B: get('B', ['C', 'D']),
+    C: get('C', ['D']),
+    D: get('D', []),
+  }
+}
+
 const extracted = computed(() => {
   const md = props.markdown || ''
   const evidence = extractEvidenceQuotes(md)
   const lensSections = parseLensSections(md)
   const behaviorRows = parseBehaviorTable(md)
   const lensStrengthRows = parseLensStrengthTable(md)
+
+  // If the report includes L6 "four-layer attainability", parse its A/B/C/D subsections
+  // so UI can render them as four small panels.
+  for (const s of lensSections) {
+    if (s.lensId === 'L6') s.l6Panels = parseL6ABCDSections(s.content)
+  }
 
   const synthesisBlock = md.includes('## 合成') ? getBlockAfterHeading(md, '合成（Synthesis）') : ''
   const interval = synthesisBlock.match(/综合区间[:：]?\s*([^\n]+)/)?.[1]?.trim() || ''
@@ -242,10 +272,13 @@ const heartbeatMeta = computed(() => parseHeartbeatBlock(heartbeatBlock.value))
 
 const humanHtml = computed(() => renderMarkdown(humanBlock.value))
 
-const heartbeatBarPct = computed(() => {
+const heartbeatHearts = computed(() => {
   const { low, high } = heartbeatMeta.value
   if (low == null || high == null) return null
-  return Math.min(100, Math.max(0, Math.round((low + high) / 2)))
+  const mid = (low + high) / 2
+  const clamped = Math.min(100, Math.max(0, mid))
+  const filled = Math.min(5, Math.max(0, Math.round((clamped / 100) * 5)))
+  return { filled, total: 5 }
 })
 
 const showHero = computed(() => Boolean(humanBlock.value.trim() || heartbeatBlock.value.trim()))
@@ -265,12 +298,12 @@ const shownBehaviorRows = computed(() => {
 })
 
 const lensIdToFriendlyName: Record<LensSection['lensId'], string> = {
-  L1: '心理视角',
-  L2: '成本与互惠视角',
-  L3: '话术模板视角',
-  L4: '故事角色视角',
-  L5: '文化对照视角（可选）',
-  L6: '四层可得性（现实走到一起的难易）',
+  L1: '心理沟通线索（依恋/情绪）',
+  L2: '成本与互惠（投入/回避）',
+  L3: '真诚度线索（模板/细节）',
+  L4: '欲望的叙事翻译（关心/试探）',
+  L5: '文化对照视角（可选标签）',
+  L6: '四层可得性（A/B/C/D）',
 }
 
 function cleanLensTag(tag: string): string {
@@ -286,6 +319,25 @@ function scoreToHuman(score: number | null): string {
   if (n === 3) return '中等'
   if (n === 4) return '偏强'
   return '很强'
+}
+
+function strengthLevelToFriendly(level: string): string {
+  switch (level) {
+    case 'L1':
+      return '更接近证据（仍可能误判）'
+    case 'L2':
+      return '偏类比推演（非个体预测）'
+    case 'L3':
+      return '偏修辞/模因叙事（非检测）'
+    case 'L4':
+      return '偏文学阐释（多种译本并存）'
+    case 'L5':
+      return '偏文化标签（可选、非科学）'
+    case 'L6':
+      return '四层可得性整合（解释框架）'
+    default:
+      return level
+  }
 }
 
 const behaviorRadar = computed(() => {
@@ -508,8 +560,15 @@ onBeforeUnmount(() => {
         <div class="reportHeroKicker">不是算命 · 只是一个温柔的刻度</div>
         <div class="reportHeroTitle">心动指数</div>
         <div v-if="heartbeatMeta.tier" class="heartbeatTierPill">{{ heartbeatMeta.tier }}</div>
-        <div v-if="heartbeatBarPct != null" class="heartbeatGauge" aria-hidden="true">
-          <div class="heartbeatGaugeFill" :style="{ width: heartbeatBarPct + '%' }"></div>
+        <div v-if="heartbeatHearts != null" aria-hidden="true" style="margin-top: 8px">
+          <span
+            v-for="i in heartbeatHearts.total"
+            :key="i"
+            style="font-size: 18px; margin-right: 6px; line-height: 1"
+            :style="{ color: i <= heartbeatHearts.filled ? '#f06292' : 'rgba(240,98,146,0.25)' }"
+          >
+            ❤
+          </span>
         </div>
         <div v-if="heartbeatMeta.low != null && heartbeatMeta.high != null" class="heartbeatRangeText">
           心动区间约 {{ heartbeatMeta.low }}–{{ heartbeatMeta.high }}
@@ -557,14 +616,14 @@ onBeforeUnmount(() => {
       <div class="reportMasonry">
         <article v-if="extracted.interval" class="reportMasonryItem reportProCol reportProCol--narrative">
           <div class="reportCardNo">01</div>
-          <div class="sectionTitle">番剧字幕（合成结论）</div>
+          <div class="sectionTitle">合成结论（关系复核）</div>
           <div class="bubbleText">
             <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
             <div v-if="extracted.nextLine">
-              <b>下一步：</b> {{ extracted.nextLine }}
+              <b>关系升级下一步：</b> {{ extracted.nextLine }}
             </div>
             <div v-if="extracted.whenStop" style="margin-top: 6px">
-              <b>何时停：</b> {{ extracted.whenStop }}
+              <b>何时停（防过度解读）：</b> {{ extracted.whenStop }}
             </div>
             <details v-if="extracted.conflictBlock" class="lensDetails" open style="margin-top: 10px">
               <summary class="lensDetailsSummary">冲突调解（温柔复核）</summary>
@@ -579,10 +638,10 @@ onBeforeUnmount(() => {
 
         <article v-if="extracted.lensStrengthRows.length" class="reportMasonryItem reportProCol reportProCol--evidence">
           <div class="reportCardNo">E0</div>
-          <div class="sectionTitle">透镜强度说明（认识论级别）</div>
+          <div class="sectionTitle">这条判断有多确定（认识论强度）</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-for="r in extracted.lensStrengthRows" :key="r.level + r.tag" class="evidenceItem">
-              <div class="small">{{ r.level }} · {{ r.tag }}</div>
+              <div class="small">{{ r.level }} · {{ strengthLevelToFriendly(r.level) }}</div>
               <div style="margin-top: 6px">{{ r.meaning }}</div>
             </div>
           </div>
@@ -606,19 +665,78 @@ onBeforeUnmount(() => {
                 flex-wrap: wrap;
               "
             >
-              <div class="bubbleTag">{{ cleanLensTag(s.lensTag) }}</div>
+              <div class="bubbleTag">{{ s.lensId === 'L6' ? '四层拆解' : '透镜解读' }}</div>
               <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
             </div>
             <details class="lensDetails" :open="idx === 0 || !shouldCollapseLens(s.content)">
               <summary v-if="shouldCollapseLens(s.content)" class="lensDetailsSummary">
                 <span>展开内容</span>
               </summary>
-              <div
-                v-if="shouldCollapseLens(s.content)"
-                class="lensPreviewMd"
-                v-html="renderMarkdown(previewLensMarkdown(s.content))"
-              ></div>
-              <div class="lensFullMd" v-html="renderMarkdown(s.content)"></div>
+
+              <template v-if="s.lensId !== 'L6' || !s.l6Panels">
+                <div
+                  v-if="shouldCollapseLens(s.content)"
+                  class="lensPreviewMd"
+                  v-html="renderMarkdown(previewLensMarkdown(s.content))"
+                ></div>
+                <div class="lensFullMd" v-html="renderMarkdown(s.content)"></div>
+              </template>
+
+              <template v-else>
+                <div v-if="shouldCollapseLens(s.content)" class="lensPreviewMd">
+                  <div
+                    style="
+                      display: grid;
+                      grid-template-columns: repeat(2, minmax(0, 1fr));
+                      gap: 10px;
+                    "
+                  >
+                    <div>
+                      <div class="small">A 底层本能/安全感</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(previewLensMarkdown(s.l6Panels.A))"></div>
+                    </div>
+                    <div>
+                      <div class="small">B 心理行为/投入节奏</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(previewLensMarkdown(s.l6Panels.B))"></div>
+                    </div>
+                    <div>
+                      <div class="small">C 社会现实/成本风险</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(previewLensMarkdown(s.l6Panels.C))"></div>
+                    </div>
+                    <div>
+                      <div class="small">D 表层沟通/展示信号</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(previewLensMarkdown(s.l6Panels.D))"></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="lensFullMd">
+                  <div
+                    style="
+                      display: grid;
+                      grid-template-columns: repeat(2, minmax(0, 1fr));
+                      gap: 10px;
+                    "
+                  >
+                    <div>
+                      <div class="small">A 底层本能/安全感</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(s.l6Panels.A || '（待验证）')"></div>
+                    </div>
+                    <div>
+                      <div class="small">B 心理行为/投入节奏</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(s.l6Panels.B || '（待验证）')"></div>
+                    </div>
+                    <div>
+                      <div class="small">C 社会现实/成本风险</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(s.l6Panels.C || '（待验证）')"></div>
+                    </div>
+                    <div>
+                      <div class="small">D 表层沟通/展示信号</div>
+                      <div class="lensFullMd" v-html="renderMarkdown(s.l6Panels.D || '（待验证）')"></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
             </details>
           </div>
         </article>
