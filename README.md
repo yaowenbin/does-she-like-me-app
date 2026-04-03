@@ -66,6 +66,19 @@ npm run dev
 - **`DEEP_REASON_EXTRA_CREDITS`**（默认 `1`）：开启深度推理时，在基础 1 次之外多扣的次数；reasoner 节点失败会自动**退回**该附加次数。
 - **`DEEPSEEK_REASONER_MODEL`**（默认 `deepseek-reasoner`）：深度节点模型名。
 
+报告“去 AI 味”后处理（工程化可插拔）：
+
+- **`REPORT_HUMANIZER_MODE`**（默认 `auto`）：`off | heuristic | auto | external`
+  - `off/heuristic`：仅使用本地确定性清洗（去重复前缀、重复行、空行归一）
+  - `auto`：启发式评分超过阈值时才调用外部 humanizer
+  - `external`：有配置命令时总是调用外部 humanizer
+- **`REPORT_AI_TRACE_THRESHOLD`**（默认 `0.35`）：`auto` 模式下触发外部 humanizer 的分数阈值（0~1）
+- **`REPORT_HUMANIZER_CMD`**（可选）：外部开源 humanizer CLI 命令（从 stdin 读 markdown，stdout 输出处理结果）
+  - 示例：`python c:/tools/humanizer_zh_cli.py`
+- **`REPORT_HUMANIZER_TIMEOUT_SEC`**（默认 `12`）：外部命令超时秒数（1~60）
+
+说明：外部命令异常或超时时，会自动回退到本地清洗，不影响主流程出报告。
+
 ### 次数、卡密与公众号引流（自建）
 
 - 前端通过请求头 **`X-Device-Id`**（本地 `localStorage` UUID）标识设备；**不建账号体系**也可按设备扣次。

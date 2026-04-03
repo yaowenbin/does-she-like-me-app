@@ -69,6 +69,7 @@ from .pipeline.schemas import SupportsLLMComplete
 from .ocr import ocr_image_bytes
 from .signal_extractor import extract_input_signal
 from .wechat_mp import parse_subscribe_event, strip_qrscene, verify_signature
+from .report_humanizer import humanize_report_text
 
 
 def get_data_dir() -> Path:
@@ -215,6 +216,7 @@ def _build_user_facing_markdown(
     scoring_result: dict,
     friendly_summary: dict,
     quote_map: list[dict],
+    llm_report: str,
 ) -> str:
     score = int(scoring_result.get("total_score") or 0)
     low, high = _friendly_range_by_score(score)
@@ -259,14 +261,15 @@ def _build_user_facing_markdown(
         "## 复盘问题\n"
         "- 这段关系里，我最在意的是“被回应”还是“被承诺”？\n"
         "- 过去 7 天，对方有没有持续行动，而不只是口头表达？\n"
-        "- 如果继续投入，我的情绪和生活是否变得更稳定？\n"
+        "- 如果继续投入，我的情绪和生活是否变得更稳定？\n\n"
+        "---\n\n"
     )
     footer = (
         "\n\n---\n\n"
         "温馨提示：本工具用于沟通关系自检与行动建议，"
         "结论请结合现实互动持续验证，先保护自己的情绪和边界。"
     )
-    return f"{preface}{footer}"
+    return f"{preface}{llm_report}{footer}"
 
 
 def _sanitize_report_text(report_markdown: str) -> str:
@@ -286,7 +289,12 @@ def _sanitize_report_text(report_markdown: str) -> str:
         if any(x in line for x in banned_fragments):
             continue
         kept.append(line)
-    return "\n".join(kept).strip()
+    cleaned = "\n".join(kept).strip()
+    # 可插拔人话后处理链：
+    # - 默认 auto：启发式审计 + 确定性清洗
+    # - 可选 external：调用开源 humanizer CLI（失败自动回退）
+    result = humanize_report_text(cleaned)
+    return result.text
 
 
 def _require_x_device_id(x_device_id: str | None) -> str:
@@ -990,6 +998,7 @@ def analyze_archive(
         scoring_result=domain_out.scoring,
         friendly_summary=domain_out.friendly,
         quote_map=quote_map,
+        llm_report=_cleaned_report,
     )
     db.save_report(
         archive_id,

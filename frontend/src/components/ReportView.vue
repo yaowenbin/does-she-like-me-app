@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import * as echarts from 'echarts'
+import { NTag } from 'naive-ui'
 
 type LensSection = {
   lensTag: string
@@ -29,6 +30,11 @@ let lensChart: any | null = null
 function sanitizeHtml(html: string) {
   return DOMPurify.sanitize(html)
 }
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+})
 
 function renderMarkdown(md: string) {
   // `marked` 的类型在不同版本下会对返回值进行联合（string | Promise<string>）。
@@ -134,6 +140,31 @@ function getBlockAfterSubHeading(md: string, subHeading: string) {
   return (next >= 0 ? rest.slice(0, next) : rest).trim()
 }
 
+function stripMdEmphasis(s: string): string {
+  return (s || '').replace(/\*\*/g, '').trim()
+}
+
+function normalizeIntervalText(raw: string): string {
+  let t = stripMdEmphasis(raw)
+  t = t.replace(/^综合区间[:：]\s*/g, '').trim()
+  return t
+}
+
+function splitActionItems(raw: string): string[] {
+  const text = (raw || '').trim()
+  if (!text) return []
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+  const items = lines
+    .map((l) => l.replace(/^[-*]\s+/, '').replace(/^\d+[.)、]\s+/, '').trim())
+    .filter(Boolean)
+  if (!items.length) return []
+  // 如果本身只有一行长句，仍然返回一条，交给 markdown 渲染
+  return items
+}
+
 type BehaviorRow = { dimension: string; score: number | null; evidence: string; alt: string; raw: string }
 
 function parseBehaviorTable(md: string): BehaviorRow[] {
@@ -226,9 +257,12 @@ const extracted = computed(() => {
   }
 
   const synthesisBlock = md.includes('## 合成') ? getBlockAfterHeading(md, '合成（Synthesis）') : ''
-  const interval = synthesisBlock.match(/综合区间[:：]?\s*([^\n]+)/)?.[1]?.trim() || ''
+  const intervalRaw = synthesisBlock.match(/综合区间[:：]?\s*([^\n]+)/)?.[1]?.trim() || ''
+  const interval = normalizeIntervalText(intervalRaw)
   const nextLine = synthesisBlock.match(/下一步[^\\n]*[:：]?\s*([\\s\\S]*?)(?:\n\n|$)/)?.[1]?.trim() || ''
   const whenStop = synthesisBlock.match(/何时停[^\\n]*[:：]?\s*([\\s\\S]*?)(?:\n\n|$)/)?.[1]?.trim() || ''
+  const nextItems = splitActionItems(nextLine)
+  const stopItems = splitActionItems(whenStop)
 
   const conflictBlock = getBlockAfterSubHeading(synthesisBlock, '冲突调解')
   const narrativesBlock = getBlockAfterSubHeading(synthesisBlock, '三种叙事')
@@ -244,6 +278,8 @@ const extracted = computed(() => {
     interval,
     nextLine,
     whenStop,
+    nextItems,
+    stopItems,
   }
 })
 
@@ -344,6 +380,31 @@ function strengthLevelToFriendly(level: string): string {
     default:
       return level
   }
+}
+
+function strengthLevelToTagType(level: string): 'default' | 'success' | 'warning' | 'error' | 'info' {
+  if (level === 'L1') return 'success'
+  if (level === 'L6') return 'info'
+  if (level === 'L5') return 'warning'
+  return 'default'
+}
+
+function intervalMainLabel(interval: string): string {
+  const t = (interval || '').trim()
+  if (!t) return ''
+  // 例如：偏高（...）=> 偏高
+  return t.split(/[（(]/)[0].trim()
+}
+
+function intervalToTagType(interval: string): 'default' | 'success' | 'warning' | 'error' | 'info' {
+  const main = intervalMainLabel(interval)
+  if (!main) return 'default'
+  if (main.includes('偏低')) return 'error'
+  if (main.includes('样本不足')) return 'warning'
+  if (main.includes('信号混在一起')) return 'warning'
+  if (main.includes('中等偏高') || main.includes('偏高')) return 'success'
+  if (main.includes('中等偏低') || main.includes('偏谨慎') || main.includes('中等')) return 'info'
+  return 'default'
 }
 
 const behaviorRadar = computed(() => {
@@ -624,12 +685,27 @@ onBeforeUnmount(() => {
           <div class="reportCardNo">01</div>
           <div class="sectionTitle">合成结论（关系复核）</div>
           <div class="bubbleText">
-            <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
+            <div style="font-weight: 900; margin-bottom: 6px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center">
+              <span>综合区间：</span>
+              <n-tag size="medium" round :type="intervalToTagType(extracted.interval)">{{ intervalMainLabel(extracted.interval) || extracted.interval }}</n-tag>
+            </div>
             <div v-if="extracted.nextLine">
-              <b>关系升级下一步：</b> {{ extracted.nextLine }}
+              <b>关系升级下一步：</b>
+              <ul v-if="extracted.nextItems.length" style="margin: 6px 0 0 18px; padding: 0">
+                <li v-for="(it, i) in extracted.nextItems" :key="`next-${i}`" style="margin: 4px 0">
+                  <span class="lensFullMd" v-html="renderMarkdown(it)"></span>
+                </li>
+              </ul>
+              <div v-else class="lensFullMd" v-html="renderMarkdown(extracted.nextLine)"></div>
             </div>
             <div v-if="extracted.whenStop" style="margin-top: 6px">
-              <b>何时停（防过度解读）：</b> {{ extracted.whenStop }}
+              <b>何时停（防过度解读）：</b>
+              <ul v-if="extracted.stopItems.length" style="margin: 6px 0 0 18px; padding: 0">
+                <li v-for="(it, i) in extracted.stopItems" :key="`stop-${i}`" style="margin: 4px 0">
+                  <span class="lensFullMd" v-html="renderMarkdown(it)"></span>
+                </li>
+              </ul>
+              <div v-else class="lensFullMd" v-html="renderMarkdown(extracted.whenStop)"></div>
             </div>
             <details v-if="extracted.conflictBlock" class="lensDetails" open style="margin-top: 10px">
               <summary class="lensDetailsSummary">冲突调解（温柔复核）</summary>
@@ -647,8 +723,11 @@ onBeforeUnmount(() => {
           <div class="sectionTitle">这条判断有多确定（认识论强度）</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-for="r in extracted.lensStrengthRows" :key="r.level + r.tag" class="evidenceItem">
-              <div class="small">{{ r.level }} · {{ strengthLevelToFriendly(r.level) }}</div>
-              <div style="margin-top: 6px">{{ r.meaning }}</div>
+              <div class="small" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+                <n-tag size="small" round :type="strengthLevelToTagType(r.level)">{{ r.level }}</n-tag>
+                <span class="muted">{{ strengthLevelToFriendly(r.level) }}</span>
+              </div>
+              <div class="lensFullMd" style="margin-top: 6px" v-html="renderMarkdown(r.meaning)"></div>
             </div>
           </div>
         </article>
