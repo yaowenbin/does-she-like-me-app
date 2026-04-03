@@ -21,10 +21,18 @@ import {
   darkTheme,
 } from 'naive-ui'
 import {
+  adminGetFeedbackStats,
+  adminGetTuningRows,
+  adminResetDeviceTuning,
+  adminUpsertDeviceTuning,
+  getCapabilityConfig,
   adminCreateGiftCodes,
   adminListGiftCodes,
   adminRevokeGiftCodes,
+  type AdminFeedbackStats,
   type AdminGiftCodeRow,
+  type AdminTuningRows,
+  type CapabilityConfig,
   type GiftCodeStatus,
 } from '../api'
 import { toast } from '../http'
@@ -99,6 +107,12 @@ const manualExpireDays = ref(7)
 
 const showGenModal = ref(false)
 const lastGenPlain = ref('')
+const feedbackStats = ref<AdminFeedbackStats | null>(null)
+const tuningRows = ref<AdminTuningRows | null>(null)
+const opsDays = ref(30)
+const opsDeviceId = ref('')
+const opsDeltaInput = ref('S1=0.01\nS3=0.01\nS10=0.005')
+const capabilityConfig = ref<CapabilityConfig | null>(null)
 
 const filteredRows = computed(() => {
   let list = rows.value
@@ -258,6 +272,9 @@ const columns: DataTableColumns<AdminGiftCodeRow> = [
 async function pullGiftCodeRows(): Promise<boolean> {
   try {
     rows.value = await adminListGiftCodes()
+    feedbackStats.value = await adminGetFeedbackStats(opsDays.value, 30)
+    tuningRows.value = await adminGetTuningRows(200)
+    capabilityConfig.value = await getCapabilityConfig()
     authed.value = true
     checkedRowKeys.value = []
     return true
@@ -266,6 +283,69 @@ async function pullGiftCodeRows(): Promise<boolean> {
     authed.value = false
     rows.value = []
     return false
+  }
+}
+
+function parseDeltaInput(s: string): Record<string, number> {
+  const out: Record<string, number> = {}
+  for (const line of (s || '').split(/\r?\n/)) {
+    const t = line.trim()
+    if (!t) continue
+    const [k, v] = t.split('=')
+    const sid = (k || '').trim().toUpperCase()
+    const n = Number((v || '').trim())
+    if (!/^S([1-9]|10)$/.test(sid)) continue
+    if (!Number.isFinite(n)) continue
+    out[sid] = n
+  }
+  return out
+}
+
+async function refreshOpsData() {
+  pageLoading.value = true
+  try {
+    feedbackStats.value = await adminGetFeedbackStats(opsDays.value, 30)
+    tuningRows.value = await adminGetTuningRows(200)
+    capabilityConfig.value = await getCapabilityConfig()
+  } finally {
+    pageLoading.value = false
+  }
+}
+
+async function applyTuningForDevice() {
+  const did = opsDeviceId.value.trim()
+  if (did.length < 8) {
+    toast.warning('请输入有效 device_id')
+    return
+  }
+  const deltas = parseDeltaInput(opsDeltaInput.value)
+  if (!Object.keys(deltas).length) {
+    toast.warning('请按 S1=0.01 的格式输入至少一条调优')
+    return
+  }
+  pageLoading.value = true
+  try {
+    const r = await adminUpsertDeviceTuning(did, deltas)
+    toast.success(`已写入 ${r.affected} 条调优参数`)
+    await refreshOpsData()
+  } finally {
+    pageLoading.value = false
+  }
+}
+
+async function resetTuningForDevice() {
+  const did = opsDeviceId.value.trim()
+  if (did.length < 8) {
+    toast.warning('请输入有效 device_id')
+    return
+  }
+  pageLoading.value = true
+  try {
+    const r = await adminResetDeviceTuning(did)
+    toast.success(`已重置 ${r.affected} 条设备调优`)
+    await refreshOpsData()
+  } finally {
+    pageLoading.value = false
   }
 }
 
@@ -655,6 +735,66 @@ onMounted(async () => {
             </div>
           </div>
 
+          <div class="opsGrid">
+            <n-card class="sectionCard">
+              <template #header>
+                <div class="sectionHead">
+                  <span class="adminEyebrow adminEyebrow--onCard">Feedback Ops</span>
+                  <span class="sectionHeadTitle">反馈统计（最近 {{ feedbackStats?.days || opsDays }} 天）</span>
+                </div>
+              </template>
+              <div class="opsFilters">
+                <n-input-number v-model:value="opsDays" :min="1" :max="365" :step="1" />
+                <n-button size="small" tertiary :loading="pageLoading" @click="refreshOpsData">刷新统计</n-button>
+              </div>
+              <p class="fieldHint" v-if="feedbackStats">
+                总反馈 {{ feedbackStats.total }}，更准 {{ feedbackStats.accurate }}，不太准 {{ feedbackStats.inaccurate }}，
+                准确率 {{ Math.round((feedbackStats.accuracy_rate || 0) * 100) }}%
+              </p>
+              <div class="opsTimeline" v-if="feedbackStats?.recent?.length">
+                <div v-for="(it, idx) in feedbackStats.recent.slice(0, 10)" :key="`${it.created_at}-${idx}`" class="opsTimelineItem">
+                  <n-tag size="small" :type="it.verdict === 'accurate' ? 'success' : 'warning'" round :bordered="false">
+                    {{ it.verdict === 'accurate' ? '更准' : '不太准' }}
+                  </n-tag>
+                  <span class="opsTime">{{ fmtTime(it.created_at) }}</span>
+                  <code class="opsCode">{{ it.device_id.slice(0, 10) }}…</code>
+                  <span class="opsText">{{ it.note || '无备注' }}</span>
+                </div>
+              </div>
+            </n-card>
+
+            <n-card class="sectionCard">
+              <template #header>
+                <div class="sectionHead">
+                  <span class="adminEyebrow adminEyebrow--onCard">Tuning Ops</span>
+                  <span class="sectionHeadTitle">调优配置介入</span>
+                </div>
+              </template>
+              <div class="opsField">
+                <label class="genLabel">目标设备 device_id</label>
+                <n-input v-model:value="opsDeviceId" placeholder="粘贴完整 device_id" />
+              </div>
+              <div class="opsField" style="margin-top: 8px">
+                <label class="genLabel">权重增量（每行一条）</label>
+                <textarea v-model="opsDeltaInput" class="manualArea" placeholder="S1=0.01&#10;S3=0.01&#10;S10=0.005" />
+              </div>
+              <div class="opsActions">
+                <n-button type="primary" :loading="pageLoading" @click="applyTuningForDevice">写入调优</n-button>
+                <n-popconfirm @positive-click="resetTuningForDevice">
+                  <template #trigger>
+                    <n-button type="error" secondary :loading="pageLoading">重置该设备调优</n-button>
+                  </template>
+                  确认重置该设备所有调优项？
+                </n-popconfirm>
+              </div>
+              <p class="fieldHint">当前调优行数：{{ tuningRows?.total_rows || 0 }}。可用于运营实验和回滚。</p>
+              <p class="fieldHint" v-if="capabilityConfig">
+                能力现状：文本 {{ capabilityConfig.text ? '✅' : '❌' }} · 图文OCR
+                {{ capabilityConfig.image_ocr ? '✅' : '❌' }} · 音频 {{ capabilityConfig.audio ? '✅' : '🚧' }}
+              </p>
+            </n-card>
+          </div>
+
           <n-card class="sectionCard sectionCard--accent">
             <template #header>
               <div class="sectionHead">
@@ -1039,6 +1179,71 @@ onMounted(async () => {
   grid-template-columns: repeat(4, 1fr);
   gap: 12px;
   margin-bottom: 1.25rem;
+}
+
+.opsGrid {
+  display: grid;
+  grid-template-columns: 1.3fr 1fr;
+  gap: 12px;
+  margin-bottom: 1.25rem;
+}
+
+@media (max-width: 1080px) {
+  .opsGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.opsFilters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.opsTimeline {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.opsTimelineItem {
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.14);
+}
+
+.opsTime {
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.opsCode {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.opsText {
+  color: rgba(226, 232, 240, 0.88);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.opsField {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.opsActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
 }
 
 @media (max-width: 960px) {

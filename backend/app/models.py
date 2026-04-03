@@ -81,6 +81,13 @@ class AnalyzeFeaturesResponse(BaseModel):
     entitlements_enforced: bool
 
 
+class CapabilityResponse(BaseModel):
+    text: bool = True
+    image_ocr: bool = True
+    audio: bool = False
+    audio_plan: str = "planned"
+
+
 class AnalyzePlanResponse(BaseModel):
     archive_id: str
     can_analyze: bool
@@ -190,3 +197,53 @@ class AdminGiftCodeRevokeBody(BaseModel):
 
 class AdminGiftCodeRevokeResult(BaseModel):
     revoked: int
+
+
+class AdminFeedbackStatItem(BaseModel):
+    day: str
+    accurate: int
+    inaccurate: int
+
+
+class AdminRecentFeedbackRow(BaseModel):
+    archive_id: str
+    device_id: str
+    verdict: str
+    note: str = ""
+    created_at: str
+
+
+class AdminFeedbackStatsResponse(BaseModel):
+    days: int
+    total: int
+    accurate: int
+    inaccurate: int
+    accuracy_rate: float
+    by_day: List[AdminFeedbackStatItem] = Field(default_factory=list)
+    recent: List[AdminRecentFeedbackRow] = Field(default_factory=list)
+
+
+class AdminTuningRow(BaseModel):
+    device_id: str
+    skill_id: str
+    delta: float
+    updated_at: str
+
+
+class AdminTuningListResponse(BaseModel):
+    total_rows: int
+    rows: List[AdminTuningRow] = Field(default_factory=list)
+
+
+class AdminTuningUpsertRequest(BaseModel):
+    device_id: str
+    deltas: Dict[str, float] = Field(default_factory=dict)
+
+
+class AdminTuningResetRequest(BaseModel):
+    device_id: str
+
+
+class AdminTuningMutateResponse(BaseModel):
+    ok: bool
+    affected: int

@@ -35,7 +35,13 @@ from .models import (
     AdminGiftCodeRevokeBody,
     AdminGiftCodeRevokeResult,
     AdminGiftCodeRow,
+    AdminFeedbackStatsResponse,
+    AdminTuningListResponse,
+    AdminTuningMutateResponse,
+    AdminTuningResetRequest,
+    AdminTuningUpsertRequest,
     AnalyzeFeaturesResponse,
+    CapabilityResponse,
     AnalyzePlanResponse,
     AnalyzeRequest,
     AnalyzeResult,
@@ -320,6 +326,49 @@ def admin_revoke_gift_codes(
     return AdminGiftCodeRevokeResult(revoked=n)
 
 
+@app.get("/api/admin/feedback/stats", response_model=AdminFeedbackStatsResponse)
+def admin_feedback_stats(
+    days: int = 30,
+    recent_limit: int = 30,
+    _: None = Depends(require_admin_bearer),
+) -> AdminFeedbackStatsResponse:
+    payload = db.admin_feedback_stats(days=days, recent_limit=recent_limit)
+    return AdminFeedbackStatsResponse(**payload)
+
+
+@app.get("/api/admin/tuning/rows", response_model=AdminTuningListResponse)
+def admin_tuning_rows(
+    limit: int = 200,
+    _: None = Depends(require_admin_bearer),
+) -> AdminTuningListResponse:
+    payload = db.admin_list_tuning_rows(limit=limit)
+    return AdminTuningListResponse(**payload)
+
+
+@app.post("/api/admin/tuning/device/upsert", response_model=AdminTuningMutateResponse)
+def admin_upsert_device_tuning(
+    body: AdminTuningUpsertRequest,
+    _: None = Depends(require_admin_bearer),
+) -> AdminTuningMutateResponse:
+    did = (body.device_id or "").strip()
+    if len(did) < 8:
+        raise HTTPException(status_code=400, detail="device_id 过短")
+    db.upsert_device_weight_tuning(did, body.deltas or {})
+    return AdminTuningMutateResponse(ok=True, affected=len(body.deltas or {}))
+
+
+@app.post("/api/admin/tuning/device/reset", response_model=AdminTuningMutateResponse)
+def admin_reset_device_tuning(
+    body: AdminTuningResetRequest,
+    _: None = Depends(require_admin_bearer),
+) -> AdminTuningMutateResponse:
+    did = (body.device_id or "").strip()
+    if len(did) < 8:
+        raise HTTPException(status_code=400, detail="device_id 过短")
+    cleared = db.reset_device_weight_tuning(did)
+    return AdminTuningMutateResponse(ok=True, affected=cleared)
+
+
 @app.get("/api/config/analyze", response_model=AnalyzeFeaturesResponse)
 def analyze_features() -> AnalyzeFeaturesResponse:
     return AnalyzeFeaturesResponse(
@@ -328,6 +377,11 @@ def analyze_features() -> AnalyzeFeaturesResponse:
         reasoner_model=default_reasoner_model(),
         entitlements_enforced=_entitlements_enforce(),
     )
+
+
+@app.get("/api/config/capabilities", response_model=CapabilityResponse)
+def capabilities() -> CapabilityResponse:
+    return CapabilityResponse(text=True, image_ocr=True, audio=False, audio_plan="planned")
 
 
 @app.get("/api/archives/{archive_id}/analyze/plan", response_model=AnalyzePlanResponse)
@@ -561,7 +615,7 @@ def export_report_pdf(
     rep = db.get_report(archive_id)
     if not rep:
         raise HTTPException(status_code=400, detail="暂无报告，请先生成")
-    title = (a.name or "治愈报告").strip() or "治愈报告"
+    title = (a.name or "恋爱报告").strip() or "恋爱报告"
     try:
         pdf_bytes = report_markdown_to_pdf_bytes(
             report_markdown=rep["report_markdown"],

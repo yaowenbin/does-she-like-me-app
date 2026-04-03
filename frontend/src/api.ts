@@ -137,6 +137,13 @@ export type AnalyzePlan = {
   pipeline_steps: string[]
 }
 
+export type CapabilityConfig = {
+  text: boolean
+  image_ocr: boolean
+  audio: boolean
+  audio_plan: string
+}
+
 export type ReportFeedbackResponse = {
   ok: boolean
   verdict: 'accurate' | 'inaccurate'
@@ -184,6 +191,13 @@ export async function analyzeArchive(
 export async function getAnalyzePlan(archiveId: string, deepReasoning: boolean): Promise<AnalyzePlan> {
   const { data } = await http.get<AnalyzePlan>(`/api/archives/${archiveId}/analyze/plan`, {
     params: { deep_reasoning: deepReasoning },
+    skipGlobalErrorMessage: true,
+  })
+  return data
+}
+
+export async function getCapabilityConfig(): Promise<CapabilityConfig> {
+  const { data } = await http.get<CapabilityConfig>('/api/config/capabilities', {
     skipGlobalErrorMessage: true,
   })
   return data
@@ -298,6 +312,54 @@ export async function adminCreateGiftCodes(body: AdminCreateGiftCodesBody): Prom
 
 export async function adminRevokeGiftCodes(codes: string[]): Promise<{ revoked: number }> {
   const { data } = await http.post<{ revoked: number }>('/api/admin/gift-codes/revoke', { codes })
+  return data
+}
+
+export type AdminFeedbackStats = {
+  days: number
+  total: number
+  accurate: number
+  inaccurate: number
+  accuracy_rate: number
+  by_day: Array<{ day: string; accurate: number; inaccurate: number }>
+  recent: Array<{
+    archive_id: string
+    device_id: string
+    verdict: 'accurate' | 'inaccurate'
+    note: string
+    created_at: string
+  }>
+}
+
+export type AdminTuningRows = {
+  total_rows: number
+  rows: Array<{ device_id: string; skill_id: string; delta: number; updated_at: string }>
+}
+
+export async function adminGetFeedbackStats(days = 30, recentLimit = 30): Promise<AdminFeedbackStats> {
+  const { data } = await http.get<AdminFeedbackStats>('/api/admin/feedback/stats', {
+    params: { days, recent_limit: recentLimit },
+  })
+  return data
+}
+
+export async function adminGetTuningRows(limit = 200): Promise<AdminTuningRows> {
+  const { data } = await http.get<AdminTuningRows>('/api/admin/tuning/rows', { params: { limit } })
+  return data
+}
+
+export async function adminUpsertDeviceTuning(deviceId: string, deltas: Record<string, number>): Promise<{ ok: boolean; affected: number }> {
+  const { data } = await http.post<{ ok: boolean; affected: number }>('/api/admin/tuning/device/upsert', {
+    device_id: deviceId,
+    deltas,
+  })
+  return data
+}
+
+export async function adminResetDeviceTuning(deviceId: string): Promise<{ ok: boolean; affected: number }> {
+  const { data } = await http.post<{ ok: boolean; affected: number }>('/api/admin/tuning/device/reset', {
+    device_id: deviceId,
+  })
   return data
 }
 

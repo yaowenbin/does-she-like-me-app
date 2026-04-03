@@ -144,7 +144,7 @@ def report_markdown_to_pdf_bytes(*, report_markdown: str, title: str) -> bytes:
         extensions=["tables", "fenced_code"],
         output_format="html5",
     )
-    safe_title = html.escape(title or "治愈报告")
+    safe_title = html.escape(title or "恋爱报告")
 
     charts_payload = {
         "behavior": {"indicators": behavior_indicators, "values": behavior_values},

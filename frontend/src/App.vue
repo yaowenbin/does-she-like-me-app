@@ -783,7 +783,7 @@ watch(reportFullscreen, (v) => {
       <div v-if="reportGenerating" class="pageLoadingOverlay" aria-live="polite" aria-busy="true">
         <div class="pageLoadingInner">
           <div class="pageLoadingSpinner" />
-          <div class="pageLoadingTitle">正在生成治愈报告</div>
+          <div class="pageLoadingTitle">正在生成恋爱报告</div>
           <div class="pageLoadingSub">{{ warmMessages[warmMessageIdx] }}</div>
           <div class="pageLoadingHint">关闭本页不会中断服务端任务；但若刷新浏览器，请稍后在同档案重试。</div>
         </div>
@@ -792,9 +792,9 @@ watch(reportFullscreen, (v) => {
 
     <div v-show="!reportFullscreen" class="container">
       <div class="heroBanner">
-        <div class="heroTitle">她爱你嘛 · 治愈报告</div>
+        <div class="heroTitle">她爱你嘛 · 恋爱报告</div>
         <div class="heroSubtitle">
-          作用：导入 wx 聊天 txt / 截图 OCR → 生成证据卡片与多透镜解读 → 调用 DeepSeek 返回治愈报告（Markdown）。
+          作用：导入 wx 聊天 txt / 截图 OCR → 生成证据卡片与多透镜解读 → 调用 DeepSeek 返回恋爱报告（Markdown）。
         </div>
         <div class="heroSteps">
           <div class="heroStep" :class="{ heroStepActive: flowStep === 1 }">
@@ -807,7 +807,7 @@ watch(reportFullscreen, (v) => {
           </div>
           <div class="heroStep" :class="{ heroStepActive: flowStep === 3 }">
             <div class="heroStepNum">3</div>
-            生成治愈报告
+            生成恋爱报告
           </div>
         </div>
         <div class="muted" style="margin-top: 10px">
@@ -1224,7 +1224,7 @@ watch(reportFullscreen, (v) => {
           <div style="height: 14px"></div>
 
           <div class="reportInlineHead">
-            <label>治愈报告（人话摘要 + 心动指数 + 专业分析）</label>
+            <label>恋爱报告（人话摘要 + 心动指数 + 专业分析）</label>
             <n-button
               v-if="detail?.report?.report_markdown"
               text
@@ -1254,7 +1254,7 @@ watch(reportFullscreen, (v) => {
         class="reportFullscreenLayer dslm-print-root"
       >
         <header class="reportFsToolbar">
-          <div class="reportFsTitle">治愈报告 · {{ active?.name || '未命名' }}</div>
+          <div class="reportFsTitle">恋爱报告 · {{ active?.name || '未命名' }}</div>
           <div class="reportFsActions">
             <div class="pdfExportBtnWrap">
               <n-button quaternary :disabled="pdfExporting" class="pdfExportBtn" @click="exportReportPdf">

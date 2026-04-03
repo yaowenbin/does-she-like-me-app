@@ -465,3 +465,96 @@ class Database:
                 (did,),
             )
             return int(cur.rowcount or 0)
+
+    def admin_feedback_stats(self, *, days: int = 30, recent_limit: int = 30) -> Dict[str, Any]:
+        d = max(1, min(365, int(days)))
+        rl = max(1, min(200, int(recent_limit)))
+        with self._connect() as conn:
+            total_row = conn.execute(
+                """
+                SELECT
+                  COUNT(1) AS total,
+                  SUM(CASE WHEN verdict='accurate' THEN 1 ELSE 0 END) AS accurate,
+                  SUM(CASE WHEN verdict='inaccurate' THEN 1 ELSE 0 END) AS inaccurate
+                FROM report_feedback
+                WHERE created_at >= datetime('now', ?)
+                """,
+                (f"-{d} days",),
+            ).fetchone()
+            by_day_rows = conn.execute(
+                """
+                SELECT
+                  substr(created_at, 1, 10) AS day,
+                  SUM(CASE WHEN verdict='accurate' THEN 1 ELSE 0 END) AS accurate,
+                  SUM(CASE WHEN verdict='inaccurate' THEN 1 ELSE 0 END) AS inaccurate
+                FROM report_feedback
+                WHERE created_at >= datetime('now', ?)
+                GROUP BY substr(created_at, 1, 10)
+                ORDER BY day DESC
+                LIMIT ?
+                """,
+                (f"-{d} days", d),
+            ).fetchall()
+            recent_rows = conn.execute(
+                """
+                SELECT archive_id, device_id, verdict, note, created_at
+                FROM report_feedback
+                WHERE created_at >= datetime('now', ?)
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (f"-{d} days", rl),
+            ).fetchall()
+            total = int(total_row["total"] or 0)
+            accurate = int(total_row["accurate"] or 0)
+            inaccurate = int(total_row["inaccurate"] or 0)
+            by_day = [
+                {
+                    "day": str(r["day"]),
+                    "accurate": int(r["accurate"] or 0),
+                    "inaccurate": int(r["inaccurate"] or 0),
+                }
+                for r in by_day_rows
+            ]
+            recent = [
+                {
+                    "archive_id": str(r["archive_id"]),
+                    "device_id": str(r["device_id"]),
+                    "verdict": str(r["verdict"]),
+                    "note": str(r["note"] or ""),
+                    "created_at": str(r["created_at"]),
+                }
+                for r in recent_rows
+            ]
+            return {
+                "days": d,
+                "total": total,
+                "accurate": accurate,
+                "inaccurate": inaccurate,
+                "accuracy_rate": round((accurate / total), 4) if total > 0 else 0.0,
+                "by_day": by_day,
+                "recent": recent,
+            }
+
+    def admin_list_tuning_rows(self, *, limit: int = 200) -> Dict[str, Any]:
+        lim = max(1, min(1000, int(limit)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT device_id, skill_id, delta, updated_at
+                FROM device_weight_tuning
+                ORDER BY updated_at DESC
+                LIMIT ?
+                """,
+                (lim,),
+            ).fetchall()
+            out = [
+                {
+                    "device_id": str(r["device_id"]),
+                    "skill_id": str(r["skill_id"]),
+                    "delta": float(r["delta"]),
+                    "updated_at": str(r["updated_at"]),
+                }
+                for r in rows
+            ]
+            return {"total_rows": len(out), "rows": out}
