@@ -558,7 +558,7 @@ onMounted(async () => {
           <div class="adminNavInner">
             <div class="adminBrand">
               <p class="adminEyebrow">Gift codes · Admin</p>
-              <h1 class="adminTitle">卡密运营中心</h1>
+              <h1 class="adminTitle">运营中心</h1>
               <p class="adminSubtitle">
                 批量随机入库、状态与过期可视、泄漏一键废除、CSV
                 导出；电商自动发卡可在后续对接同一数据源。
