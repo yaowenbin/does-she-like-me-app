@@ -5,6 +5,7 @@ import AdminLayout from '../pages/admin/AdminLayout.vue'
 import CodesPage from '../pages/admin/CodesPage.vue'
 import FeedbackPage from '../pages/admin/FeedbackPage.vue'
 import TuningPage from '../pages/admin/TuningPage.vue'
+import QualityPage from '../pages/admin/QualityPage.vue'
 import { requireAuthGuard } from './guard'
 
 const routes: RouteRecordRaw[] = [
@@ -26,6 +27,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'codes', name: 'codes', component: CodesPage },
       { path: 'feedback', name: 'feedback', component: FeedbackPage },
       { path: 'tuning', name: 'tuning', component: TuningPage },
+      { path: 'quality', name: 'quality', component: QualityPage },
       { path: '', redirect: '/admin/codes' },
     ],
   },
@@ -41,4 +43,3 @@ router.beforeEach((to, _from, next) => {
   if (to.meta?.requiresAuth) return requireAuthGuard(to, next)
   next()
 })
-

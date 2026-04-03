@@ -65,3 +65,19 @@ export async function adminResetDeviceTuning(deviceId: string): Promise<{ ok: bo
   })
   return data
 }
+
+export type AdminQualityMetrics = {
+  days: number
+  total_reports: number
+  evidence_coverage_rate: number
+  actionable_rate: number
+  stability_sample_groups: number
+  stability_rate: number
+}
+
+export async function adminGetQualityMetrics(days = 30): Promise<AdminQualityMetrics> {
+  const { data } = await http.get<AdminQualityMetrics>('/api/admin/quality/metrics', {
+    params: { days },
+  })
+  return data
+}

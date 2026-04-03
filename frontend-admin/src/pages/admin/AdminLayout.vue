@@ -11,6 +11,7 @@ const menuOptions: MenuOption[] = [
   { label: '卡密运营', key: 'codes' },
   { label: '反馈统计', key: 'feedback' },
   { label: '调优配置', key: 'tuning' },
+  { label: '质量看板', key: 'quality' },
 ]
 
 const menuKey = ref<string>('codes')
@@ -20,6 +21,7 @@ watch(
   () => {
     if (route.name === 'feedback') menuKey.value = 'feedback'
     else if (route.name === 'tuning') menuKey.value = 'tuning'
+    else if (route.name === 'quality') menuKey.value = 'quality'
     else menuKey.value = 'codes'
   },
   { immediate: true },
@@ -29,10 +31,12 @@ watch(menuKey, (k) => {
   if (k === 'codes' && route.name === 'codes') return
   if (k === 'feedback' && route.name === 'feedback') return
   if (k === 'tuning' && route.name === 'tuning') return
+  if (k === 'quality' && route.name === 'quality') return
 
   if (k === 'codes') router.push('/admin/codes')
   else if (k === 'feedback') router.push('/admin/feedback')
-  else router.push('/admin/tuning')
+  else if (k === 'tuning') router.push('/admin/tuning')
+  else router.push('/admin/quality')
 })
 
 function logout() {
@@ -43,6 +47,7 @@ function logout() {
 const currentPageTitle = computed(() => {
   if (menuKey.value === 'feedback') return '反馈统计'
   if (menuKey.value === 'tuning') return '调优配置'
+  if (menuKey.value === 'quality') return '质量看板'
   return '卡密运营'
 })
 </script>
@@ -71,4 +76,3 @@ const currentPageTitle = computed(() => {
     </n-layout-content>
   </n-layout>
 </template>
-
