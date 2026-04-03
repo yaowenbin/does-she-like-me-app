@@ -121,6 +121,14 @@ function getBlockAfterHeading(md: string, heading: string) {
   return (next >= 0 ? rest.slice(0, next) : rest).trim()
 }
 
+function getBlockAfterSubHeading(md: string, subHeading: string) {
+  const idx = md.indexOf(`### ${subHeading}`)
+  if (idx < 0) return ''
+  const rest = md.slice(idx + `### ${subHeading}`.length)
+  const next = rest.search(/\r?\n### /)
+  return (next >= 0 ? rest.slice(0, next) : rest).trim()
+}
+
 type BehaviorRow = { dimension: string; score: number | null; evidence: string; alt: string; raw: string }
 
 function parseBehaviorTable(md: string): BehaviorRow[] {
@@ -156,18 +164,57 @@ function parseBehaviorTable(md: string): BehaviorRow[] {
   return rows
 }
 
+type LensStrengthRow = { level: string; tag: string; meaning: string }
+function parseLensStrengthTable(md: string): LensStrengthRow[] {
+  const block = getBlockAfterHeading(md, '透镜强度说明')
+  if (!block) return []
+  const lines = block.split('\n')
+  const rows: LensStrengthRow[] = []
+  for (const line of lines) {
+    const t = line.trim()
+    if (!t.startsWith('|')) continue
+    if (t.includes('---')) continue
+    const partsAll = t.split('|').map((x) => x.trim())
+    if (partsAll[0] === '') partsAll.shift()
+    if (partsAll.length && partsAll[partsAll.length - 1] === '') partsAll.pop()
+    // Expect: | 层级 | 标签 | 含义 |
+    if (partsAll.length < 3) continue
+    const level = partsAll[0]
+    const tag = partsAll[1]
+    const meaning = partsAll.slice(2).join(' | ')
+    if (!level) continue
+    rows.push({ level, tag, meaning })
+  }
+  return rows
+}
+
 const extracted = computed(() => {
   const md = props.markdown || ''
   const evidence = extractEvidenceQuotes(md)
   const lensSections = parseLensSections(md)
   const behaviorRows = parseBehaviorTable(md)
+  const lensStrengthRows = parseLensStrengthTable(md)
 
   const synthesisBlock = md.includes('## 合成') ? getBlockAfterHeading(md, '合成（Synthesis）') : ''
   const interval = synthesisBlock.match(/综合区间[:：]?\s*([^\n]+)/)?.[1]?.trim() || ''
   const nextLine = synthesisBlock.match(/下一步[^\\n]*[:：]?\s*([\\s\\S]*?)(?:\n\n|$)/)?.[1]?.trim() || ''
   const whenStop = synthesisBlock.match(/何时停[^\\n]*[:：]?\s*([\\s\\S]*?)(?:\n\n|$)/)?.[1]?.trim() || ''
 
-  return { evidence, lensSections, behaviorRows, synthesisBlock, interval, nextLine, whenStop }
+  const conflictBlock = getBlockAfterSubHeading(synthesisBlock, '冲突调解')
+  const narrativesBlock = getBlockAfterSubHeading(synthesisBlock, '三种叙事')
+
+  return {
+    evidence,
+    lensSections,
+    behaviorRows,
+    lensStrengthRows,
+    synthesisBlock,
+    conflictBlock,
+    narrativesBlock,
+    interval,
+    nextLine,
+    whenStop,
+  }
 })
 
 const humanBlock = computed(() => getBlockAfterHeading(props.markdown || '', '一眼看懂（人话版）'))
@@ -518,6 +565,25 @@ onBeforeUnmount(() => {
             </div>
             <div v-if="extracted.whenStop" style="margin-top: 6px">
               <b>何时停：</b> {{ extracted.whenStop }}
+            </div>
+            <details v-if="extracted.conflictBlock" class="lensDetails" open style="margin-top: 10px">
+              <summary class="lensDetailsSummary">冲突调解（温柔复核）</summary>
+              <div class="lensFullMd" v-html="renderMarkdown(extracted.conflictBlock)"></div>
+            </details>
+            <details v-if="extracted.narrativesBlock" class="lensDetails" open style="margin-top: 10px">
+              <summary class="lensDetailsSummary">三种叙事（含纯友谊）</summary>
+              <div class="lensFullMd" v-html="renderMarkdown(extracted.narrativesBlock)"></div>
+            </details>
+          </div>
+        </article>
+
+        <article v-if="extracted.lensStrengthRows.length" class="reportMasonryItem reportProCol reportProCol--evidence">
+          <div class="reportCardNo">E0</div>
+          <div class="sectionTitle">透镜强度说明（认识论级别）</div>
+          <div class="evidenceList evidenceList--scroll">
+            <div v-for="r in extracted.lensStrengthRows" :key="r.level + r.tag" class="evidenceItem">
+              <div class="small">{{ r.level }} · {{ r.tag }}</div>
+              <div style="margin-top: 6px">{{ r.meaning }}</div>
             </div>
           </div>
         </article>
