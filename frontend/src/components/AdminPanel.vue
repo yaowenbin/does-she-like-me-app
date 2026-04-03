@@ -686,7 +686,7 @@ onMounted(async () => {
                 <n-input-number v-model:value="genExpireDays" :min="1" :max="365" class="genInput" />
               </div>
               <div class="genField genFieldWide">
-                <label class="genLabel">前缀（可选）</label>
+                <label class="genLabel">前缀</label>
                 <n-input v-model:value="genPrefix" placeholder="如 DSL，留空则纯随机" clearable />
               </div>
             </div>

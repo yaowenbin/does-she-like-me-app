@@ -11,7 +11,7 @@ from fastapi.responses import PlainTextResponse, Response
 
 from .admin_auth import require_admin_bearer
 from .db import Database, utc_now_iso
-from .domain_core import score_from_signal
+from .domain_core import score_from_signal, tune_weight_delta
 from .entitlements_db import (
     consume_credits,
     ensure_device,
@@ -43,6 +43,8 @@ from .models import (
     EntitlementsMeResponse,
     PasteImportRequest,
     RedeemRequest,
+    ReportFeedbackRequest,
+    ReportFeedbackResponse,
     TraceStepModel,
     UsageStepModel,
     WechatSceneResponse,
@@ -171,7 +173,32 @@ def _build_user_facing_markdown(
         f"- **下一步**：{next_step}\n"
         f"- **何时停**：{stop_rule}\n"
     )
-    return f"{preface}\n\n---\n\n{report_markdown}"
+    footer = (
+        "\n\n---\n\n"
+        "温馨提示：本工具用于沟通关系自检与行动建议，"
+        "结论请结合现实互动持续验证，先保护自己的情绪和边界。"
+    )
+    return f"{preface}\n\n---\n\n{report_markdown}{footer}"
+
+
+def _sanitize_report_text(report_markdown: str) -> str:
+    lines = (report_markdown or "").splitlines()
+    banned_fragments = (
+        "本段为思想实验与类比",
+        "不构成个体命运或「科学证明」",
+        "科普级框架",
+        "非心理咨询",
+        "非对第三方的临床诊断",
+        "文本细读",
+        "可有多种译本",
+        "禁止单一真理",
+    )
+    kept: list[str] = []
+    for line in lines:
+        if any(x in line for x in banned_fragments):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def _require_x_device_id(x_device_id: str | None) -> str:
@@ -332,6 +359,49 @@ def analyze_plan(
         has_upload=bool(upload_path and upload_path.is_file()),
         has_report=db.get_report(archive_id) is not None,
         pipeline_steps=["build", "base", "reasoner" if deep_reasoning else "finalize", "persist"],
+    )
+
+
+@app.post("/api/archives/{archive_id}/feedback", response_model=ReportFeedbackResponse)
+def submit_report_feedback(
+    archive_id: str,
+    body: ReportFeedbackRequest,
+    x_device_id: str | None = Header(None, alias="X-Device-Id"),
+) -> ReportFeedbackResponse:
+    did = _require_x_device_id(x_device_id)
+    _archive_belonging_to_device(db, archive_id, did)
+    verdict = (body.verdict or "").strip().lower()
+    if verdict not in ("accurate", "inaccurate"):
+        raise HTTPException(status_code=400, detail="verdict must be accurate or inaccurate")
+    report = db.get_report(archive_id)
+    if not report:
+        raise HTTPException(status_code=400, detail="请先生成报告再提交反馈")
+    scoring_pack = dict(report.get("scoring") or {})
+    scoring_result = dict(scoring_pack.get("scoring_result") or {})
+    if not scoring_result:
+        raise HTTPException(status_code=400, detail="当前报告无可调优评分数据")
+    current_delta = db.get_device_weight_tuning(did)
+    tuned = tune_weight_delta(
+        verdict=verdict,
+        scoring_result=scoring_result,
+        current_delta=current_delta,
+    )
+    db.save_feedback(
+        archive_id=archive_id,
+        device_id=did,
+        verdict=verdict,
+        note=(body.note or "").strip()[:500],
+        scoring=scoring_pack,
+    )
+    db.upsert_device_weight_tuning(did, tuned)
+    message = "收到，你的反馈已用于后续权重微调。"
+    if verdict == "inaccurate":
+        message = "已记录“不太准”，后续会降低当前主导信号影响。"
+    return ReportFeedbackResponse(
+        ok=True,
+        verdict=verdict,
+        message=message,
+        tuned_weights=tuned,
     )
 
 
@@ -719,9 +789,11 @@ def analyze_archive(
         scenario=a.scenario,
         tags=a.tags,
     )
-    domain_out = score_from_signal(input_signal)
+    device_tuning = db.get_device_weight_tuning(did)
+    domain_out = score_from_signal(input_signal, weight_delta=device_tuning)
+    cleaned_report = _sanitize_report_text(out.final_report)
     final_markdown = _build_user_facing_markdown(
-        report_markdown=out.final_report,
+        report_markdown=cleaned_report,
         scoring_result=domain_out.scoring,
         friendly_summary=domain_out.friendly,
     )

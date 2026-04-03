@@ -203,7 +203,7 @@ label {
 .importModeRow {
   margin-bottom: 12px;
   padding: 10px 12px;
-  border-radius: 12px;
+  
   border: 1px solid rgba(31, 26, 34, 0.14);
   background: rgba(255, 255, 255, 0.5);
 }
@@ -215,7 +215,7 @@ label {
 .importPanel {
   margin-top: 8px;
   padding: 12px 12px;
-  border-radius: 12px;
+  
   border: 1px solid rgba(31, 26, 34, 0.14);
   background: rgba(255, 255, 255, 0.5);
   min-height: 240px; /* 防止“有框但内容留白太大”的观感 */
@@ -282,7 +282,7 @@ textarea {
 
 /* Naive UI 统一圆角 + hover/focus 阴影节奏（对标一流 C 端） */
 .n-button {
-  border-radius: 12px;
+  
   transition:
     box-shadow 180ms ease,
     transform 180ms ease,
@@ -303,13 +303,13 @@ textarea {
 .n-input-number,
 .n-select,
 .n-textarea {
-  border-radius: 12px;
+  
 }
 
 .n-input-wrapper:focus-within,
 .n-select:focus-within {
   box-shadow: 0 0 0 4px rgba(240, 98, 146, 0.12);
-  border-radius: 12px;
+  
 }
 
 .healNotice {
@@ -569,7 +569,7 @@ textarea {
 
 .evidenceItem {
   border: none;
-  border-radius: 12px;
+  
   padding: 10px;
   background: rgba(255, 255, 255, 0.72);
 }
@@ -606,7 +606,7 @@ textarea {
   align-items: center;
   gap: 8px;
   padding: 10px 10px;
-  border-radius: 12px;
+  
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.55);
   margin-bottom: 10px;
@@ -631,7 +631,6 @@ textarea {
 .archiveListScroll {
   max-height: 460px;
   overflow-y: auto;
-  padding-right: 6px;
 }
 
 .uploadFileList {
@@ -644,7 +643,7 @@ textarea {
   justify-content: space-between;
   gap: 10px;
   padding: 10px 10px;
-  border-radius: 12px;
+  
   border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.55);
   margin-bottom: 8px;
@@ -668,7 +667,7 @@ textarea {
 
 .uploadThumbItem {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  
   background: rgba(255, 255, 255, 0.55);
   overflow: hidden;
 }
@@ -727,7 +726,7 @@ textarea {
 .entitlementsBar {
   margin-bottom: 14px;
   padding: 12px 12px;
-  border-radius: 12px;
+  
   border: 1px solid rgba(240, 98, 146, 0.26);
   background: linear-gradient(
     135deg,

@@ -102,6 +102,30 @@ class Database:
                 "CREATE INDEX IF NOT EXISTS idx_llm_usage_archive ON llm_usage_log(archive_id)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_run ON llm_usage_log(run_id)")
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS report_feedback (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    archive_id TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    verdict TEXT NOT NULL,
+                    note TEXT NOT NULL,
+                    scoring_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS device_weight_tuning (
+                    device_id TEXT NOT NULL,
+                    skill_id TEXT NOT NULL,
+                    delta REAL NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(device_id, skill_id)
+                )
+                """
+            )
             from .entitlements_db import init_entitlements_schema
 
             init_entitlements_schema(self.db_path)
@@ -341,3 +365,61 @@ class Database:
                     now,
                 ),
             )
+
+    def save_feedback(
+        self,
+        *,
+        archive_id: str,
+        device_id: str,
+        verdict: str,
+        note: str,
+        scoring: Dict[str, Any],
+    ) -> None:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO report_feedback (archive_id, device_id, verdict, note, scoring_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    archive_id,
+                    device_id,
+                    verdict,
+                    note,
+                    json.dumps(scoring or {}, ensure_ascii=False),
+                    now,
+                ),
+            )
+
+    def get_device_weight_tuning(self, device_id: str) -> Dict[str, float]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT skill_id, delta FROM device_weight_tuning WHERE device_id = ?
+                """,
+                ((device_id or "").strip(),),
+            ).fetchall()
+            out: Dict[str, float] = {}
+            for r in rows:
+                try:
+                    out[str(r["skill_id"])] = float(r["delta"])
+                except Exception:
+                    continue
+            return out
+
+    def upsert_device_weight_tuning(self, device_id: str, delta_map: Dict[str, float]) -> None:
+        now = utc_now_iso()
+        did = (device_id or "").strip()
+        with self._connect() as conn:
+            for skill_id, delta in (delta_map or {}).items():
+                conn.execute(
+                    """
+                    INSERT INTO device_weight_tuning (device_id, skill_id, delta, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(device_id, skill_id) DO UPDATE SET
+                        delta = excluded.delta,
+                        updated_at = excluded.updated_at
+                    """,
+                    (did, str(skill_id), float(delta), now),
+                )

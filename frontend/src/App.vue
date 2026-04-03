@@ -28,6 +28,7 @@ import {
   importOcr,
   listArchives,
   redeemGiftCode,
+  submitReportFeedback,
   type AnalyzePlan,
   type AnalyzeFeatures,
   type ArchiveSummary,
@@ -56,6 +57,8 @@ const analysisTrace = ref<Array<{ step: string; status: string; model?: string |
 const analyzePlan = ref<AnalyzePlan | null>(null)
 const scoringResult = ref<Record<string, any> | null>(null)
 const friendlySummary = ref<Record<string, any> | null>(null)
+const feedbackBusy = ref(false)
+const feedbackMsg = ref<string | null>(null)
 const redeemForm = reactive({ code: '' })
 const redeemFormRef = ref<FormInst | null>(null)
 const wechatShortCode = ref('')
@@ -478,6 +481,7 @@ async function onAnalyze() {
   if (!activeId.value) return
   error.value = null
   analysisWarn.value = null
+  feedbackMsg.value = null
   loading.value = true
   reportGenerating.value = true
   startWarmMessages()
@@ -519,6 +523,23 @@ async function onAnalyze() {
     stopWarmMessages()
     loading.value = false
     reportGenerating.value = false
+  }
+}
+
+async function onSubmitFeedback(verdict: 'accurate' | 'inaccurate') {
+  if (!activeId.value || feedbackBusy.value) return
+  feedbackBusy.value = true
+  feedbackMsg.value = null
+  try {
+    const res = await submitReportFeedback(activeId.value, { verdict })
+    feedbackMsg.value = res.message
+    toast.success(verdict === 'accurate' ? '感谢反馈，我们会保持这个判断风格' : '收到，我们会自动调低这类判断权重')
+  } catch (e: any) {
+    if (!axios.isAxiosError(e)) {
+      feedbackMsg.value = e?.message || '反馈提交失败'
+    }
+  } finally {
+    feedbackBusy.value = false
   }
 }
 
@@ -810,7 +831,7 @@ watch(reportFullscreen, (v) => {
             <n-form-item path="scenario" label="聊天场景">
               <n-select v-model:value="form.scenario" :options="scenarioOptions" placeholder="请选择" />
             </n-form-item>
-            <n-form-item label="星座（可选）">
+            <n-form-item label="星座">
               <n-select
                 v-model:value="form.zodiac"
                 :options="zodiacOptions"
@@ -821,7 +842,7 @@ watch(reportFullscreen, (v) => {
                 :onCreate="createTagOption"
               />
             </n-form-item>
-            <n-form-item label="MBTI（可选）">
+            <n-form-item label="MBTI">
               <n-select
                 v-model:value="form.mbti"
                 :options="mbtiOptions"
@@ -1014,10 +1035,10 @@ watch(reportFullscreen, (v) => {
               </n-tabs>
             </div>
 
-            <label style="margin-top: 14px">生成温度（可选）</label>
+            <label style="margin-top: 14px">生成温度</label>
             <n-input-number v-model:value="form.temperature" :min="0" :max="1.5" :step="0.1" style="width: 100%" />
 
-            <label style="margin-top: 14px">深度推理（可选）</label>
+            <label style="margin-top: 14px">深度推理</label>
             <div class="row" style="margin-top: 6px; align-items: center; gap: 12px">
               <n-switch v-model:value="form.deepReasoning" :disabled="uiBusy" />
               <span class="muted" style="font-size: 12px; line-height: 1.5">
@@ -1096,6 +1117,12 @@ watch(reportFullscreen, (v) => {
               <div><b>下一步：</b>{{ friendlySummary.next_step || '先低压力沟通，再观察是否有稳定回应。' }}</div>
               <div style="margin-top: 4px"><b>何时停：</b>{{ friendlySummary.stop_rule || '连续被回避时先暂停投入，优先照顾自己。' }}</div>
             </div>
+            <div class="feedbackRow">
+              <span class="muted tiny">这次判断对你有帮助吗？</span>
+              <n-button size="tiny" :disabled="feedbackBusy || uiBusy" @click="onSubmitFeedback('accurate')">更准</n-button>
+              <n-button size="tiny" :disabled="feedbackBusy || uiBusy" @click="onSubmitFeedback('inaccurate')">不太准</n-button>
+            </div>
+            <div v-if="feedbackMsg" class="feedbackMsg">{{ feedbackMsg }}</div>
           </div>
 
           <div v-if="scoringResult" class="scoreBrief">
@@ -1137,6 +1164,9 @@ watch(reportFullscreen, (v) => {
             生成后会先给你「一眼看懂」和心动指数，再附专业分析。你可以先把自己从“非要有答案”的压力里放出来。
           </div>
         </div>
+      </div>
+      <div class="appFooterHint">
+        温馨提示：本工具用于关系沟通自检与情绪整理，不替代你的真实感受与现实互动。先照顾好自己，再做决定。
       </div>
     </div>
 
@@ -1285,5 +1315,27 @@ watch(reportFullscreen, (v) => {
   margin-top: 8px;
   font-size: 12px;
   color: #6c6c6c;
+}
+.feedbackRow {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.feedbackMsg {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #7d4a00;
+}
+.appFooterHint {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #6a4d5f;
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px dashed rgba(194, 24, 91, 0.22);
 }
 </style>

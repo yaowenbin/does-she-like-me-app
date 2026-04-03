@@ -137,6 +137,13 @@ export type AnalyzePlan = {
   pipeline_steps: string[]
 }
 
+export type ReportFeedbackResponse = {
+  ok: boolean
+  verdict: 'accurate' | 'inaccurate'
+  message: string
+  tuned_weights: Record<string, number>
+}
+
 export async function getAnalyzeFeatures(): Promise<AnalyzeFeatures> {
   const { data } = await http.get<AnalyzeFeatures>('/api/config/analyze', {
     skipGlobalErrorMessage: true,
@@ -159,6 +166,17 @@ export async function getAnalyzePlan(archiveId: string, deepReasoning: boolean):
   const { data } = await http.get<AnalyzePlan>(`/api/archives/${archiveId}/analyze/plan`, {
     params: { deep_reasoning: deepReasoning },
     skipGlobalErrorMessage: true,
+  })
+  return data
+}
+
+export async function submitReportFeedback(
+  archiveId: string,
+  input: { verdict: 'accurate' | 'inaccurate'; note?: string }
+): Promise<ReportFeedbackResponse> {
+  const { data } = await http.post<ReportFeedbackResponse>(`/api/archives/${archiveId}/feedback`, {
+    verdict: input.verdict,
+    note: input.note || '',
   })
   return data
 }

@@ -93,6 +93,18 @@ class AnalyzePlanResponse(BaseModel):
     pipeline_steps: List[str] = Field(default_factory=list)
 
 
+class ReportFeedbackRequest(BaseModel):
+    verdict: str
+    note: str = ""
+
+
+class ReportFeedbackResponse(BaseModel):
+    ok: bool
+    verdict: str
+    message: str
+    tuned_weights: Dict[str, float] = Field(default_factory=dict)
+
+
 class RedeemRequest(BaseModel):
     code: str = ""
 

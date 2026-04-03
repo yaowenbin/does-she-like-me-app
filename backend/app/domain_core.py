@@ -63,7 +63,11 @@ def _confidence(coverage_ratio: float) -> str:
     return "low"
 
 
-def _adjust_weights(base: Dict[str, float], signal: Dict[str, Any]) -> Dict[str, float]:
+def _adjust_weights(
+    base: Dict[str, float],
+    signal: Dict[str, Any],
+    weight_delta: Dict[str, float] | None = None,
+) -> Dict[str, float]:
     weights = dict(base)
     profile = str((signal.get("profile") or "").strip())
     stage = str((signal.get("relation_stage") or "").strip())
@@ -86,6 +90,10 @@ def _adjust_weights(base: Dict[str, float], signal: Dict[str, Any]) -> Dict[str,
     if "异地" in scene:
         weights["S2"] = weights["S2"] + 0.01
         weights["S6"] = max(0.08, weights["S6"] - 0.01)
+    if weight_delta:
+        for sid, dv in weight_delta.items():
+            if sid in weights:
+                weights[sid] = max(0.01, weights[sid] + float(dv))
     total = sum(weights.values())
     if total <= 0:
         return dict(base)
@@ -96,7 +104,11 @@ def _to_1_5(x: float, base: float = 1.0, span: float = 4.0) -> float:
     return _clamp(base + span * x)
 
 
-def score_from_signal(signal: Dict[str, Any]) -> DomainOutput:
+def score_from_signal(
+    signal: Dict[str, Any],
+    *,
+    weight_delta: Dict[str, float] | None = None,
+) -> DomainOutput:
     m = signal.get("metrics") or {}
     anomalies = list(signal.get("anomalies") or [])
     coverage = float(m.get("coverage_ratio") or 0.0)
@@ -133,7 +145,7 @@ def score_from_signal(signal: Dict[str, Any]) -> DomainOutput:
         "S10": round(s10, 2),
     }
 
-    weights = _adjust_weights(DEFAULT_WEIGHTS, signal)
+    weights = _adjust_weights(DEFAULT_WEIGHTS, signal, weight_delta)
     total_1_5 = sum(skill_scores[k] * weights[k] for k in SKILL_IDS)
     total_score = int(round((total_1_5 - 1.0) / 4.0 * 100))
     total_score = max(0, min(100, total_score))
@@ -205,3 +217,33 @@ def score_from_signal(signal: Dict[str, Any]) -> DomainOutput:
         "trend_delta": "na",
     }
     return DomainOutput(scoring=scoring, friendly=friendly)
+
+
+def tune_weight_delta(
+    *,
+    verdict: str,
+    scoring_result: Dict[str, Any],
+    current_delta: Dict[str, float] | None = None,
+) -> Dict[str, float]:
+    updated = dict(current_delta or {})
+    reasons = list(scoring_result.get("reasons") or [])
+    skill_scores = dict(scoring_result.get("skill_scores") or {})
+    if verdict == "accurate":
+        for r in reasons[:3]:
+            sid = str(r.get("skill_id") or "")
+            if sid in DEFAULT_WEIGHTS:
+                updated[sid] = round(float(updated.get(sid) or 0.0) + 0.004, 4)
+    else:
+        for r in reasons[:3]:
+            sid = str(r.get("skill_id") or "")
+            if sid in DEFAULT_WEIGHTS:
+                updated[sid] = round(float(updated.get(sid) or 0.0) - 0.005, 4)
+        for sid in ("S3", "S4", "S10"):
+            if sid in DEFAULT_WEIGHTS:
+                base = float(updated.get(sid) or 0.0)
+                if float(skill_scores.get(sid) or 3.0) < 3.0:
+                    base += 0.003
+                updated[sid] = round(base, 4)
+    for sid in list(updated.keys()):
+        updated[sid] = max(-0.06, min(0.06, float(updated[sid])))
+    return updated
