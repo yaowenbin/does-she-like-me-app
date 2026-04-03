@@ -161,6 +161,20 @@ const heartbeatBarPct = computed(() => {
 
 const showHero = computed(() => Boolean(humanBlock.value.trim() || heartbeatBlock.value.trim()))
 
+const evidenceExpanded = ref(false)
+const behaviorExpanded = ref(false)
+const LENS_PREVIEW_CHARS = 220
+
+const shownEvidence = computed(() => {
+  const list = extracted.value.evidence
+  return evidenceExpanded.value ? list : list.slice(0, 6)
+})
+
+const shownBehaviorRows = computed(() => {
+  const list = extracted.value.behaviorRows
+  return behaviorExpanded.value ? list : list.slice(0, 6)
+})
+
 const behaviorRadar = computed(() => {
   const rows = extracted.value.behaviorRows
   // 取前 6 个可读维度
@@ -197,6 +211,16 @@ function wrapAxisLabel(s: string, chunk: number): string {
     lines.push(t.slice(i, i + chunk))
   }
   return lines.join('\n')
+}
+
+function shouldCollapseLens(content: string): boolean {
+  return (content || '').length > LENS_PREVIEW_CHARS
+}
+
+function previewLensMarkdown(content: string): string {
+  const text = (content || '').trim()
+  if (text.length <= LENS_PREVIEW_CHARS) return text
+  return `${text.slice(0, LENS_PREVIEW_CHARS)}...`
 }
 
 function initCharts() {
@@ -401,80 +425,113 @@ onBeforeUnmount(() => {
       <summary class="proFoldSummary">专业分析（证据、图表与量表）</summary>
       <p class="proFoldHint muted">下面偏长，适合想慢慢核对细节的你；普通读者看完上面两段也可以停在这里。</p>
 
-      <div class="reportProGrid">
-        <div class="reportProCol reportProCol--narrative">
-          <div class="reportColTitle">第 1 列 · 合成与透镜</div>
-          <div class="bubbleWrap" v-if="extracted.interval">
-            <div class="sectionTitle">番剧字幕（合成结论）</div>
-            <div class="bubbleText">
-              <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
-              <div v-if="extracted.nextLine">
-                <b>下一步：</b> {{ extracted.nextLine }}
-              </div>
-              <div v-if="extracted.whenStop" style="margin-top: 6px">
-                <b>何时停：</b> {{ extracted.whenStop }}
-              </div>
-            </div>
-          </div>
-
-          <div class="reportLensStack">
-            <div class="bubbleWrap" v-for="s in extracted.lensSections" :key="s.lensTag">
-              <div class="sectionTitle">章节（{{ s.lensId }}）</div>
-              <div class="bubbleText">
-                <div
-                  style="
-                    display: flex;
-                    align-items: center;
-                    justify-content: space-between;
-                    gap: 10px;
-                    margin-bottom: 8px;
-                    flex-wrap: wrap;
-                  "
-                >
-                  <div class="bubbleTag">{{ s.lensTag }}</div>
-                  <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
-                </div>
-                <div v-html="renderMarkdown(s.content)"></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="reportProCol reportProCol--charts">
-          <div class="reportColTitle">第 2 列 · 雷达图</div>
+      <!-- 大屏优先：雷达图置顶首屏；窄屏上下堆叠 -->
+      <div class="reportRadarStrip" aria-label="雷达可视化">
+        <article class="reportRadarStripItem reportProCol reportProCol--charts">
+          <div class="reportCardNo">R1</div>
           <div class="sectionTitle">行为维度雷达</div>
-          <div class="chartBox chartBox--radar" ref="behaviorRadarRef"></div>
-          <div class="muted chartHint">
-            基于「行为层量表」可解析数值；半径留白便于完整显示轴标签。
-          </div>
-
-          <div class="sectionTitle" style="margin-top: 8px">透镜证据密度</div>
-          <div class="chartBox chartBox--radar" ref="lensRadarRef"></div>
+          <div class="chartBox chartBox--radar chartBox--radarHero" ref="behaviorRadarRef"></div>
+          <div class="muted chartHint">基于行为层量表解析数值，非精确预测。</div>
+        </article>
+        <article class="reportRadarStripItem reportProCol reportProCol--charts">
+          <div class="reportCardNo">R2</div>
+          <div class="sectionTitle">透镜证据密度</div>
+          <div class="chartBox chartBox--radar chartBox--radarHero" ref="lensRadarRef"></div>
           <div class="muted chartHint">L1–L6 启发式密度，非科学量化。</div>
-        </div>
+        </article>
+      </div>
 
-        <div class="reportProCol reportProCol--evidence">
-          <div class="reportColTitle">第 3 列 · 摘录与量表</div>
+      <div class="reportMasonry">
+        <article v-if="extracted.interval" class="reportMasonryItem reportProCol reportProCol--narrative">
+          <div class="reportCardNo">01</div>
+          <div class="sectionTitle">番剧字幕（合成结论）</div>
+          <div class="bubbleText">
+            <div style="font-weight: 900; margin-bottom: 6px">综合区间：{{ extracted.interval }}</div>
+            <div v-if="extracted.nextLine">
+              <b>下一步：</b> {{ extracted.nextLine }}
+            </div>
+            <div v-if="extracted.whenStop" style="margin-top: 6px">
+              <b>何时停：</b> {{ extracted.whenStop }}
+            </div>
+          </div>
+        </article>
+
+        <article
+          v-for="(s, idx) in extracted.lensSections"
+          :key="s.lensTag"
+          class="reportMasonryItem reportProCol reportProCol--narrative"
+        >
+          <div class="reportCardNo">{{ String(idx + 2).padStart(2, '0') }}</div>
+          <div class="sectionTitle">章节（{{ s.lensId }}）</div>
+          <div class="bubbleText">
+            <div
+              style="
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 10px;
+                margin-bottom: 8px;
+                flex-wrap: wrap;
+              "
+            >
+              <div class="bubbleTag">{{ s.lensTag }}</div>
+              <div class="muted" style="white-space: nowrap">证据密度：{{ extractEvidenceQuotes(s.content).length }}</div>
+            </div>
+            <details class="lensDetails" :open="idx === 0 || !shouldCollapseLens(s.content)">
+              <summary v-if="shouldCollapseLens(s.content)" class="lensDetailsSummary">
+                <span>展开完整章节</span>
+              </summary>
+              <div
+                v-if="shouldCollapseLens(s.content)"
+                class="lensPreviewMd"
+                v-html="renderMarkdown(previewLensMarkdown(s.content))"
+              ></div>
+              <div class="lensFullMd" v-html="renderMarkdown(s.content)"></div>
+            </details>
+          </div>
+        </article>
+
+        <article class="reportMasonryItem reportProCol reportProCol--evidence">
+          <div class="reportCardNo">E1</div>
           <div class="sectionTitle">证据卡片</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-if="extracted.evidence.length === 0" class="muted">未在报告中找到可展示的证据引文。</div>
-            <div v-for="q in extracted.evidence.slice(0, 12)" :key="q" class="evidenceItem">
+            <div v-for="q in shownEvidence" :key="q" class="evidenceItem">
               <div class="small">摘录（用于复核，不做判决）</div>
               <div>{{ q }}</div>
             </div>
+            <button
+              v-if="extracted.evidence.length > 6"
+              class="plainToggleBtn"
+              type="button"
+              @click="evidenceExpanded = !evidenceExpanded"
+            >
+              {{ evidenceExpanded ? '收起证据' : `展开全部证据（${extracted.evidence.length}）` }}
+            </button>
           </div>
+        </article>
 
-          <div class="sectionTitle" style="margin-top: 14px">行为层量表（可复核）</div>
+        <article class="reportMasonryItem reportProCol reportProCol--evidence">
+          <div class="reportCardNo">E2</div>
+          <div class="sectionTitle">行为层量表（可复核）</div>
           <div class="evidenceList evidenceList--scroll">
             <div v-if="extracted.behaviorRows.length === 0" class="muted">报告中未解析到行为层量表。</div>
-            <div v-for="r in extracted.behaviorRows.slice(0, 12)" :key="r.dimension" class="evidenceItem">
+            <div v-for="r in shownBehaviorRows" :key="r.dimension" class="evidenceItem">
               <div class="small">{{ r.dimension }}</div>
               <div style="font-weight: 900">
                 {{ r.score === null ? 'nc' : r.score }}
               </div>
             </div>
+            <button
+              v-if="extracted.behaviorRows.length > 6"
+              class="plainToggleBtn"
+              type="button"
+              @click="behaviorExpanded = !behaviorExpanded"
+            >
+              {{ behaviorExpanded ? '收起量表' : `展开全部量表（${extracted.behaviorRows.length}）` }}
+            </button>
           </div>
-        </div>
+        </article>
       </div>
     </details>
   </div>

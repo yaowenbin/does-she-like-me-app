@@ -31,6 +31,7 @@ body {
     "Segoe UI Emoji";
   background: linear-gradient(135deg, #fff0f5 0%, #f3e5f5 45%, #f7f7ff 100%);
   color: var(--text);
+  overflow-x: hidden;
 }
 
 .sakura-layer {
@@ -308,6 +309,7 @@ textarea {
 .n-input-wrapper:focus-within,
 .n-select:focus-within {
   box-shadow: 0 0 0 4px rgba(240, 98, 146, 0.12);
+  border-radius: 12px;
 }
 
 .healNotice {
@@ -349,12 +351,8 @@ textarea {
 
 .bubbleText {
   padding: 12px;
-  border: 1px solid rgba(36, 24, 42, 0.1);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.65);
-  box-shadow:
-    0 10px 24px rgba(255, 127, 181, 0.1),
-    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .chartBox {
@@ -371,6 +369,48 @@ textarea {
   margin-top: 12px;
 }
 
+/* R1/R2 雷达：大屏双列置顶首屏；窄屏单列堆叠；宽屏滚动时轻微吸顶保留可视化 */
+.reportRadarStrip {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 12px;
+  margin-bottom: 4px;
+}
+
+.reportRadarStripItem {
+  min-width: 0;
+}
+
+.reportMasonry {
+  column-count: 3;
+  column-gap: 16px;
+  margin-top: 12px;
+}
+
+.reportMasonryItem {
+  break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin-bottom: 16px;
+}
+
+@media (max-width: 1280px) {
+  .reportMasonry {
+    column-count: 2;
+  }
+}
+
+@media (max-width: 1280px) {
+  .reportProGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .reportProCol--evidence {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 1180px) {
   .reportProGrid {
     grid-template-columns: 1fr;
@@ -379,17 +419,45 @@ textarea {
   .reportProCol--charts {
     order: -1;
   }
+
+  .reportMasonry {
+    column-count: 1;
+  }
 }
 
 .reportProCol {
   min-width: 0;
   border-radius: 14px;
   padding: 12px 12px 14px;
-  border: 1px solid rgba(31, 26, 34, 0.1);
-  background: rgba(255, 255, 255, 0.62);
-  box-shadow:
-    0 18px 48px rgba(240, 98, 146, 0.1),
-    0 1px 0 rgba(255, 255, 255, 0.78) inset;
+  border: none;
+  background: transparent;
+}
+
+.reportProCol--narrative {
+  background: rgba(255, 240, 248, 0.62);
+}
+
+.reportProCol--charts {
+  background: rgba(243, 232, 255, 0.62);
+}
+
+.reportProCol--evidence {
+  background: rgba(227, 242, 255, 0.52);
+}
+
+.reportCardNo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 24px;
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 11px;
+  font-weight: 900;
+  color: rgba(31, 26, 34, 0.78);
+  background: rgba(255, 255, 255, 0.72);
+  margin-bottom: 6px;
 }
 
 .reportColTitle {
@@ -411,6 +479,35 @@ textarea {
   padding-right: 0;
 }
 
+.lensDetails {
+  margin-top: 6px;
+}
+
+.lensDetailsSummary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  color: #ad1457;
+  margin-bottom: 8px;
+}
+
+.lensPreviewMd {
+  color: rgba(31, 26, 34, 0.8);
+  margin-bottom: 8px;
+}
+
+.lensDetails[open] .lensPreviewMd {
+  display: none;
+}
+
+.lensFullMd {
+  display: none;
+}
+
+.lensDetails[open] .lensFullMd {
+  display: block;
+}
+
 .reportProCol--charts .sectionTitle {
   margin-top: 4px;
 }
@@ -420,6 +517,14 @@ textarea {
   min-height: 340px;
   margin-top: 8px;
   background: transparent;
+  width: 100%;
+  overflow: hidden;
+}
+
+/* 置顶条内雷达：略压缩高度，首屏更易同时看到双图 */
+.chartBox--radarHero {
+  height: clamp(260px, 32vh, 400px);
+  min-height: 260px;
 }
 
 .chartHint {
@@ -447,11 +552,26 @@ textarea {
   gap: 8px;
 }
 
+.plainToggleBtn {
+  border: none;
+  background: transparent;
+  color: #ad1457;
+  font-weight: 800;
+  font-size: 12px;
+  padding: 6px 2px 2px;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.plainToggleBtn:hover {
+  text-decoration: underline;
+}
+
 .evidenceItem {
-  border: 1px dashed rgba(36, 24, 42, 0.16);
+  border: none;
   border-radius: 12px;
   padding: 10px;
-  background: rgba(255, 255, 255, 0.55);
+  background: rgba(255, 255, 255, 0.72);
 }
 
 .evidenceItem .small {
@@ -939,8 +1059,8 @@ textarea {
 .proFold {
   margin-top: 8px;
   border-radius: 16px;
-  border: 1px solid rgba(31, 26, 34, 0.12);
-  background: rgba(255, 255, 255, 0.55);
+  border: none;
+  background: rgba(255, 255, 255, 0.35);
   padding: 8px 12px 14px;
   backdrop-filter: blur(10px);
 }
