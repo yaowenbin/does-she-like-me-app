@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import cast
@@ -38,6 +40,7 @@ from .models import (
     AdminFeedbackStatsResponse,
     AdminTuningListResponse,
     AdminTuningMutateResponse,
+    AdminQualityMetricsResponse,
     AdminTuningResetRequest,
     AdminTuningUpsertRequest,
     AnalyzeFeaturesResponse,
@@ -144,51 +147,126 @@ def _friendly_range_by_score(score: int) -> tuple[int, int]:
     return (81, 100)
 
 
+_QUOTE_ROLE_RE = re.compile(r"^\s*(我|对方|Ta|TA|她|他|你|女方|男方|A|B)\s*[：:]\s*(.+)$")
+_QUOTE_TAG_PATTERNS: dict[str, re.Pattern[str]] = {
+    "active": re.compile(r"(要不要|一起|约|见面|我在你家楼下|我订了|下周|周末)"),
+    "empathy": re.compile(r"(辛苦|抱抱|别难过|别紧张|我听你|加油|你可以|担心)"),
+    "boundary": re.compile(r"(我跟他们说|提前走了|拒绝|你放心|只陪你|边界)"),
+    "cost": re.compile(r"(早起|送|买了|订了|陪你|特意|记得|记着|查了)"),
+    "risk": re.compile(r"(借钱|转我|转账|帮我做|明天还你|别公开|别告诉别人)"),
+    "public": re.compile(r"(朋友圈|见朋友|见家人|介绍朋友|公开)"),
+}
+
+
+def _build_quote_map(normalized_chat_text: str, limit: int = 10) -> list[dict]:
+    rows = [x.strip() for x in (normalized_chat_text or "").splitlines() if x.strip()]
+    out: list[dict] = []
+    idx = 1
+    for i, row in enumerate(rows, start=1):
+        m = _QUOTE_ROLE_RE.match(row)
+        if m:
+            role = m.group(1).strip()
+            content = m.group(2).strip()
+            speaker = "我方" if role == "我" else "对方"
+        else:
+            parts = [p.strip() for p in row.split("|")]
+            if len(parts) >= 3:
+                sender = parts[1]
+                content = "|".join(parts[2:]).strip()
+                speaker = "我方" if sender in ("我", "self", "me") else "对方"
+            else:
+                continue
+        tags = [k for k, p in _QUOTE_TAG_PATTERNS.items() if p.search(content)]
+        if speaker == "对方" and tags:
+            out.append(
+                {
+                    "qid": f"Q{idx}",
+                    "line_no": i,
+                    "speaker": speaker,
+                    "text": content[:180],
+                    "tags": tags,
+                }
+            )
+            idx += 1
+        if len(out) >= limit:
+            break
+    if not out:
+        idx = 1
+        for i, row in enumerate(rows, start=1):
+            m = _QUOTE_ROLE_RE.match(row)
+            if m and m.group(1).strip() != "我":
+                out.append(
+                    {
+                        "qid": f"Q{idx}",
+                        "line_no": i,
+                        "speaker": "对方",
+                        "text": m.group(2).strip()[:180],
+                        "tags": ["fallback"],
+                    }
+                )
+                idx += 1
+            if len(out) >= min(5, limit):
+                break
+    return out
+
+
 def _build_user_facing_markdown(
     *,
-    report_markdown: str,
     scoring_result: dict,
     friendly_summary: dict,
+    quote_map: list[dict],
 ) -> str:
     score = int(scoring_result.get("total_score") or 0)
     low, high = _friendly_range_by_score(score)
-    confidence = str(scoring_result.get("confidence") or "low")
-    headline = str(friendly_summary.get("headline") or scoring_result.get("level") or "样本不足")
-    easy_summary = str(friendly_summary.get("easy_summary") or "")
-    next_step = str(friendly_summary.get("next_step") or "先用低压力互动验证，不要一次性重投入。")
-    stop_rule = str(friendly_summary.get("stop_rule") or "连续被回避时先暂停投入，避免情绪透支。")
+    headline = str(friendly_summary.get("headline") or "样本不足")
+    easy_summary = str(friendly_summary.get("easy_summary") or "先看对方有没有稳定行动，再决定投入节奏。")
+    next_step = str(friendly_summary.get("next_step") or "先发一个轻松邀约，看对方是否给出具体时间。")
+    stop_rule = str(friendly_summary.get("stop_rule") or "连续被回避时先停下来，不继续消耗自己。")
     risk_flags = friendly_summary.get("risk_flags") or []
-    top_reasons = friendly_summary.get("top_reasons") or []
-    reason_lines = []
-    for r in top_reasons[:4]:
-        if isinstance(r, dict):
-            reason_lines.append(
-                f"- {str(r.get('skill_name') or r.get('skill_id') or '关键信号')}：{str(r.get('score') or '--')}"
-            )
     risk_line = "、".join([str(x) for x in risk_flags]) if isinstance(risk_flags, list) else str(risk_flags)
+    qmap_lines = []
+    for q in quote_map:
+        qid = str(q.get("qid") or "")
+        text = str(q.get("text") or "")
+        qmap_lines.append(
+            f"- [{qid}](#quote-{qid.lower()})（证据：原句）「{text}」"
+        )
+    quote_detail_lines = []
+    for q in quote_map:
+        qid = str(q.get("qid") or "")
+        text = str(q.get("text") or "")
+        tags = "、".join([str(x) for x in q.get("tags") or []])
+        quote_detail_lines.append(
+            f"<a id=\"quote-{qid.lower()}\"></a>- **{qid} 原句**：{text}（标签：{tags or '通用'}）"
+        )
     preface = (
-        "## 一眼看懂（人话版）\n"
-        f"- **结论**：{headline}\n"
-        f"- **一句话**：{easy_summary}\n"
-        f"- **置信度**：{confidence}\n"
-        f"- **主要风险**：{risk_line or '未见显著高风险'}\n\n"
-        "## 心动指数\n"
-        f"- **区间**：{low}-{high}\n"
-        f"- **分数**：{score}/100\n"
-        f"- **一句话**：{headline}\n\n"
-        "## 你最该看什么\n"
-        + ("\n".join(reason_lines) if reason_lines else "- 样本不足，建议补充近 2-4 周对话后再判断。")
+        "## 结论\n"
+        f"- **心动指数**：{score}/100（参考区间 {low}-{high}）\n"
+        f"- **一句话结论**：{headline}\n"
+        f"- **你要先知道**：{easy_summary}\n\n"
+        "## 证据\n"
+        + ("\n".join(qmap_lines) if qmap_lines else "- 当前对话证据不足，请补充近 2-4 周聊天记录。")
         + "\n\n"
-        "## 下一步与何时停\n"
-        f"- **下一步**：{next_step}\n"
-        f"- **何时停**：{stop_rule}\n"
+        + ("\n".join(quote_detail_lines) if quote_detail_lines else "")
+        + "\n\n"
+        "## 可执行建议\n"
+        f"- 先做一个小动作：{next_step}\n"
+        "- 观察重点：是否主动、是否具体、是否持续。\n"
+        "- 记录 7 天变化：主动次数、回应质量、是否尊重你边界。\n\n"
+        "## 止损线\n"
+        f"- {stop_rule}\n"
+        f"- 风险提醒：{risk_line or '未见显著高风险'}\n\n"
+        "## 复盘问题\n"
+        "- 这段关系里，我最在意的是“被回应”还是“被承诺”？\n"
+        "- 过去 7 天，对方有没有持续行动，而不只是口头表达？\n"
+        "- 如果继续投入，我的情绪和生活是否变得更稳定？\n"
     )
     footer = (
         "\n\n---\n\n"
         "温馨提示：本工具用于沟通关系自检与行动建议，"
         "结论请结合现实互动持续验证，先保护自己的情绪和边界。"
     )
-    return f"{preface}\n\n---\n\n{report_markdown}{footer}"
+    return f"{preface}{footer}"
 
 
 def _sanitize_report_text(report_markdown: str) -> str:
@@ -334,6 +412,15 @@ def admin_feedback_stats(
 ) -> AdminFeedbackStatsResponse:
     payload = db.admin_feedback_stats(days=days, recent_limit=recent_limit)
     return AdminFeedbackStatsResponse(**payload)
+
+
+@app.get("/api/admin/quality/metrics", response_model=AdminQualityMetricsResponse)
+def admin_quality_metrics(
+    days: int = 30,
+    _: None = Depends(require_admin_bearer),
+) -> AdminQualityMetricsResponse:
+    payload = db.admin_quality_metrics(days=days)
+    return AdminQualityMetricsResponse(**payload)
 
 
 @app.get("/api/admin/tuning/rows", response_model=AdminTuningListResponse)
@@ -890,11 +977,19 @@ def analyze_archive(
     )
     device_tuning = db.get_device_weight_tuning(did)
     domain_out = score_from_signal(input_signal, weight_delta=device_tuning)
-    cleaned_report = _sanitize_report_text(out.final_report)
+    content_hash = hashlib.sha1(normalized_chat_text.encode("utf-8", errors="ignore")).hexdigest()
+    db.insert_analyze_run(
+        archive_id=archive_id,
+        content_hash=content_hash,
+        total_score=int(domain_out.scoring.get("total_score") or 0),
+        confidence=str(domain_out.scoring.get("confidence") or ""),
+    )
+    _cleaned_report = _sanitize_report_text(out.final_report)
+    quote_map = _build_quote_map(normalized_chat_text, limit=10)
     final_markdown = _build_user_facing_markdown(
-        report_markdown=cleaned_report,
         scoring_result=domain_out.scoring,
         friendly_summary=domain_out.friendly,
+        quote_map=quote_map,
     )
     db.save_report(
         archive_id,
@@ -904,6 +999,7 @@ def analyze_archive(
             "input_signal": input_signal,
             "scoring_result": domain_out.scoring,
             "friendly_summary": domain_out.friendly,
+            "quote_map": quote_map,
         },
     )
     usage_models = [UsageStepModel(**s) for s in out.usage_steps]
@@ -922,4 +1018,5 @@ def analyze_archive(
         input_signal=input_signal,
         scoring_result=domain_out.scoring,
         friendly_summary=domain_out.friendly,
+        quote_map=quote_map,
     )

@@ -126,6 +126,20 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS analyze_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    archive_id TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    total_score INTEGER NOT NULL,
+                    confidence TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analyze_runs_archive ON analyze_runs(archive_id)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_analyze_runs_hash ON analyze_runs(content_hash)")
             from .entitlements_db import init_entitlements_schema
 
             init_entitlements_schema(self.db_path)
@@ -558,3 +572,82 @@ class Database:
                 for r in rows
             ]
             return {"total_rows": len(out), "rows": out}
+
+    def insert_analyze_run(
+        self,
+        *,
+        archive_id: str,
+        content_hash: str,
+        total_score: int,
+        confidence: str,
+    ) -> None:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO analyze_runs (archive_id, content_hash, total_score, confidence, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (archive_id, content_hash, int(total_score), str(confidence or ""), now),
+            )
+
+    def admin_quality_metrics(self, *, days: int = 30) -> Dict[str, Any]:
+        d = max(1, min(365, int(days)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT scoring_json, report_markdown
+                FROM reports
+                WHERE created_at >= datetime('now', ?)
+                """,
+                (f"-{d} days",),
+            ).fetchall()
+            total_reports = len(rows)
+            evidence_hit = 0
+            actionable_hit = 0
+            for r in rows:
+                scoring = {}
+                try:
+                    scoring = json.loads(r["scoring_json"] or "{}")
+                except json.JSONDecodeError:
+                    scoring = {}
+                quote_map = list(scoring.get("quote_map") or [])
+                if len(quote_map) >= 3:
+                    evidence_hit += 1
+                md = str(r["report_markdown"] or "")
+                actionable = (
+                    ("## 可执行建议" in md)
+                    and any(x in md for x in ("先做一个小动作", "观察重点", "记录 7 天变化"))
+                )
+                if actionable:
+                    actionable_hit += 1
+
+            stability_rows = conn.execute(
+                """
+                SELECT content_hash, total_score
+                FROM analyze_runs
+                WHERE created_at >= datetime('now', ?)
+                ORDER BY content_hash, created_at DESC
+                """,
+                (f"-{d} days",),
+            ).fetchall()
+            by_hash: Dict[str, List[int]] = {}
+            for r in stability_rows:
+                h = str(r["content_hash"] or "")
+                by_hash.setdefault(h, []).append(int(r["total_score"] or 0))
+            grouped = [v for v in by_hash.values() if len(v) >= 2]
+            stable_groups = 0
+            total_groups = len(grouped)
+            for g in grouped:
+                drift = max(g) - min(g)
+                if drift <= 8:
+                    stable_groups += 1
+            stability_rate = round((stable_groups / total_groups), 4) if total_groups > 0 else 0.0
+            return {
+                "days": d,
+                "total_reports": total_reports,
+                "evidence_coverage_rate": round((evidence_hit / total_reports), 4) if total_reports > 0 else 0.0,
+                "actionable_rate": round((actionable_hit / total_reports), 4) if total_reports > 0 else 0.0,
+                "stability_sample_groups": total_groups,
+                "stability_rate": stability_rate,
+            }

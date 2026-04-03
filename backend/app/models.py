@@ -70,6 +70,7 @@ class AnalyzeResult(BaseModel):
     input_signal: Dict[str, Any] = Field(default_factory=dict)
     scoring_result: Dict[str, Any] = Field(default_factory=dict)
     friendly_summary: Dict[str, Any] = Field(default_factory=dict)
+    quote_map: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class AnalyzeFeaturesResponse(BaseModel):
@@ -247,3 +248,12 @@ class AdminTuningResetRequest(BaseModel):
 class AdminTuningMutateResponse(BaseModel):
     ok: bool
     affected: int
+
+
+class AdminQualityMetricsResponse(BaseModel):
+    days: int
+    total_reports: int
+    evidence_coverage_rate: float
+    actionable_rate: float
+    stability_sample_groups: int
+    stability_rate: float

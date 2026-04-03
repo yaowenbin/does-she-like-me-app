@@ -11,7 +11,7 @@ export const { message: toast } = createDiscreteApi(['message'], {
 
 export const http = axios.create({
   baseURL: API_BASE || undefined,
-  timeout: 180_000,
+  timeout: 600_000,
 })
 
 http.interceptors.request.use((config) => {

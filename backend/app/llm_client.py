@@ -65,7 +65,7 @@ class DeepSeekClient:
         model: str,
     ) -> None:
         self._model = model
-        self._client = OpenAI(api_key=api_key, base_url=base_url)
+        self._client = OpenAI(api_key=api_key, base_url=base_url, timeout=300.0, max_retries=1)
 
     @property
     def model(self) -> str:
