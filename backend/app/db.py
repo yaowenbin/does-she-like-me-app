@@ -76,6 +76,27 @@ class Database:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS llm_usage_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    archive_id TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    step TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    prompt_tokens INTEGER,
+                    completion_tokens INTEGER,
+                    total_tokens INTEGER,
+                    prompt_cache_hit_tokens INTEGER,
+                    prompt_cache_miss_tokens INTEGER,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_llm_usage_archive ON llm_usage_log(archive_id)"
+            )
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_llm_usage_run ON llm_usage_log(run_id)")
             from .entitlements_db import init_entitlements_schema
 
             init_entitlements_schema(self.db_path)
@@ -237,4 +258,41 @@ class Database:
                 "report_markdown": row["report_markdown"],
                 "created_at": row["created_at"],
             }
+
+    def log_llm_usage(
+        self,
+        *,
+        archive_id: str,
+        run_id: str,
+        step: str,
+        model: str,
+        prompt_tokens: Optional[int] = None,
+        completion_tokens: Optional[int] = None,
+        total_tokens: Optional[int] = None,
+        prompt_cache_hit_tokens: Optional[int] = None,
+        prompt_cache_miss_tokens: Optional[int] = None,
+    ) -> None:
+        now = utc_now_iso()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO llm_usage_log (
+                    archive_id, run_id, step, model,
+                    prompt_tokens, completion_tokens, total_tokens,
+                    prompt_cache_hit_tokens, prompt_cache_miss_tokens, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    archive_id,
+                    run_id,
+                    step,
+                    model,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    prompt_cache_hit_tokens,
+                    prompt_cache_miss_tokens,
+                    now,
+                ),
+            )
 

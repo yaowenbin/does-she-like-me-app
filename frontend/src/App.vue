@@ -5,6 +5,7 @@ import {
   NConfigProvider,
   NInput,
   NInputNumber,
+  NSwitch,
   NTabs,
   NTabPane,
   NSelect,
@@ -13,6 +14,7 @@ import {
   analyzeArchive,
   createArchive,
   downloadReportPdf,
+  getAnalyzeFeatures,
   getArchiveDetail,
   getEntitlementsMe,
   getWechatScene,
@@ -21,6 +23,7 @@ import {
   importOcr,
   listArchives,
   redeemGiftCode,
+  type AnalyzeFeatures,
   type ArchiveSummary,
   type EntitlementsMe,
 } from './api'
@@ -36,6 +39,10 @@ const reportFullscreen = ref(false)
 
 /** 设备维度次数 / 卡密 / 公众号引流 */
 const entitlements = ref<EntitlementsMe | null>(null)
+/** 分析流水线配置（深度扣次、reasoner 模型名） */
+const analyzeFeatures = ref<AnalyzeFeatures | null>(null)
+/** 深度推理失败但已保存基础稿时的提示 */
+const analysisWarn = ref<string | null>(null)
 const redeemCodeInput = ref('')
 const wechatShortCode = ref('')
 const pdfExporting = ref(false)
@@ -82,6 +89,8 @@ const form = reactive({
   zodiac: '',
   mbti: '',
   temperature: 0.7,
+  /** 第二段：deepseek-reasoner 整稿审稿（可能多扣次） */
+  deepReasoning: false,
 })
 
 const stageOptions = [
@@ -379,11 +388,20 @@ async function onImportOcr() {
 async function onAnalyze() {
   if (!activeId.value) return
   error.value = null
+  analysisWarn.value = null
   loading.value = true
   reportGenerating.value = true
   startWarmMessages()
   try {
-    const res = await analyzeArchive(activeId.value, { temperature: Number(form.temperature) })
+    const res = await analyzeArchive(activeId.value, {
+      temperature: Number(form.temperature),
+      deep_reasoning: form.deepReasoning,
+    })
+    if (res.reasoner_failed) {
+      analysisWarn.value =
+        (res.reasoner_error && `深度推理未生效（已保存基础稿）：${res.reasoner_error}`) ||
+        '深度推理未生效，已保存基础稿；附加次数已退回（若开启扣次）。'
+    }
     await refreshDetail()
     // detail 会刷新到最新 report
     detail.value = {
@@ -435,6 +453,14 @@ async function exportReportPdf() {
   }
 }
 
+async function refreshAnalyzeFeatures() {
+  try {
+    analyzeFeatures.value = await getAnalyzeFeatures()
+  } catch {
+    analyzeFeatures.value = null
+  }
+}
+
 async function refreshEntitlements() {
   try {
     entitlements.value = await getEntitlementsMe()
@@ -444,6 +470,7 @@ async function refreshEntitlements() {
     } else {
       wechatShortCode.value = ''
     }
+    await refreshAnalyzeFeatures()
   } catch {
     entitlements.value = null
   }
@@ -485,6 +512,7 @@ onMounted(async () => {
   } catch (e: any) {
     error.value = e?.message || String(e)
   }
+  await refreshAnalyzeFeatures()
 })
 
 const badge = computed(() => badgeFor(active.value))
@@ -500,7 +528,20 @@ const flowStep = computed(() => {
 type ImportMode = 'txt' | 'ocr' | 'paste'
 const importMode = ref<ImportMode>('txt')
 
-const canAnalyze = computed(() => Boolean(detail.value?.archive?.has_upload))
+const deepExtraCredits = computed(() => analyzeFeatures.value?.deep_reason_extra_credits ?? 1)
+
+const creditsNeededForAnalyze = computed(() => {
+  if (!entitlements.value?.entitlements_enforced) return 1
+  return form.deepReasoning ? 1 + deepExtraCredits.value : 1
+})
+
+const canAnalyze = computed(() => {
+  if (!detail.value?.archive?.has_upload) return false
+  if (entitlements.value?.entitlements_enforced) {
+    if (entitlements.value.credits < creditsNeededForAnalyze.value) return false
+  }
+  return true
+})
 
 watch(
   () => activeId.value,
@@ -822,6 +863,20 @@ watch(reportFullscreen, (v) => {
             <label style="margin-top: 14px">生成温度（可选）</label>
             <n-input-number v-model:value="form.temperature" :min="0" :max="1.5" :step="0.1" style="width: 100%" />
 
+            <label style="margin-top: 14px">深度推理（可选）</label>
+            <div class="row" style="margin-top: 6px; align-items: center; gap: 12px">
+              <n-switch v-model:value="form.deepReasoning" :disabled="uiBusy" />
+              <span class="muted" style="font-size: 12px; line-height: 1.5">
+                第二段调用 {{ analyzeFeatures?.reasoner_model || 'deepseek-reasoner' }} 对整稿再审，强化冲突调解与不确定性。
+                <template v-if="entitlements?.entitlements_enforced">
+                  <template v-if="form.deepReasoning">
+                    本次将扣 <b>{{ creditsNeededForAnalyze }}</b> 次（含深度附加 {{ deepExtraCredits }}）。
+                  </template>
+                  <template v-else>本次将扣 <b>1</b> 次。</template>
+                </template>
+              </span>
+            </div>
+
             <div style="height: 10px"></div>
             <n-button
               :disabled="uiBusy || !canAnalyze"
@@ -840,6 +895,13 @@ watch(reportFullscreen, (v) => {
 
           <div v-if="error" style="color: #b00020; font-weight: 700; margin-top: 12px">
             {{ error }}
+          </div>
+
+          <div
+            v-if="analysisWarn"
+            style="color: #856404; background: rgba(255, 193, 7, 0.12); padding: 10px 12px; border-radius: 10px; margin-top: 12px; font-size: 13px; line-height: 1.5"
+          >
+            {{ analysisWarn }}
           </div>
 
           <div style="height: 14px"></div>

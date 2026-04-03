@@ -141,13 +141,49 @@ export async function importOcr(
   return await res.json()
 }
 
+export type AnalyzeFeatures = {
+  pipeline_version: string
+  deep_reason_extra_credits: number
+  reasoner_model: string
+  entitlements_enforced: boolean
+}
+
+export type UsageStep = {
+  step: string
+  model: string
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  prompt_cache_hit_tokens?: number | null
+  prompt_cache_miss_tokens?: number | null
+}
+
+export type AnalyzeResultDto = {
+  archive_id: string
+  model: string
+  report_markdown: string
+  pipeline_version?: string
+  deep_reasoning_requested?: boolean
+  deep_reasoning_used?: boolean
+  reasoner_failed?: boolean
+  reasoner_error?: string | null
+  usage_steps?: UsageStep[]
+}
+
+export async function getAnalyzeFeatures(): Promise<AnalyzeFeatures> {
+  return jsonFetch('/api/config/analyze')
+}
+
 export async function analyzeArchive(
   archiveId: string,
-  input: { temperature: number }
-): Promise<{ archive_id: string; model: string; report_markdown: string }> {
+  input: { temperature: number; deep_reasoning?: boolean }
+): Promise<AnalyzeResultDto> {
   return jsonFetch(`/api/archives/${archiveId}/analyze`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: JSON.stringify({
+      temperature: input.temperature,
+      deep_reasoning: Boolean(input.deep_reasoning),
+    }),
   })
 }
 

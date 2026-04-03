@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
+from typing import cast
 
 from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,27 +11,31 @@ from fastapi.responses import PlainTextResponse, Response
 
 from .db import Database
 from .entitlements_db import (
-    consume_credit_for_analyze,
+    consume_credits,
     grant_oa_follow_bonus,
     redeem_gift_code,
+    refund_credits,
     resolve_scene_to_device,
     upsert_scene_token,
     ensure_device,
     device_row,
 )
-from .llm_client import create_llm_client
+from .llm_client import create_llm_client, default_reasoner_model
 from .models import (
+    AnalyzeFeaturesResponse,
     AnalyzeRequest,
     AnalyzeResult,
     CreateArchiveRequest,
     EntitlementsMeResponse,
     PasteImportRequest,
     RedeemRequest,
+    UsageStepModel,
     WechatSceneResponse,
 )
 from .parser import normalize_wx_txt
 from .pdf_export import report_markdown_to_pdf_bytes
-from .prompt_builder import build_system_and_user_prompts
+from .pipeline import run_report_pipeline
+from .pipeline.schemas import SupportsLLMComplete
 from .ocr import ocr_image_bytes
 from .wechat_mp import parse_subscribe_event, strip_qrscene, verify_signature
 
@@ -66,6 +71,13 @@ def _oa_follow_bonus() -> int:
         return 1
 
 
+def _deep_reason_extra_credits() -> int:
+    try:
+        return max(0, int(os.getenv("DEEP_REASON_EXTRA_CREDITS", "1")))
+    except ValueError:
+        return 1
+
+
 def _wechat_token() -> str:
     return os.getenv("WECHAT_MP_TOKEN", "").strip()
 
@@ -83,6 +95,16 @@ app.add_middleware(
 @app.get("/api/health")
 def health() -> dict:
     return {"ok": True, "entitlements_enforce": _entitlements_enforce()}
+
+
+@app.get("/api/config/analyze", response_model=AnalyzeFeaturesResponse)
+def analyze_features() -> AnalyzeFeaturesResponse:
+    return AnalyzeFeaturesResponse(
+        pipeline_version="graph-v1",
+        deep_reason_extra_credits=_deep_reason_extra_credits(),
+        reasoner_model=default_reasoner_model(),
+        entitlements_enforced=_entitlements_enforce(),
+    )
 
 
 @app.get("/api/entitlements/me", response_model=EntitlementsMeResponse)
@@ -380,6 +402,10 @@ def analyze_archive(
         raise HTTPException(status_code=400, detail="missing imported content (wx-txt / paste / ocr)")
 
     did = (x_device_id or "").strip()
+    extra_dr = _deep_reason_extra_credits() if req.deep_reasoning else 0
+    charge = 1 + extra_dr if req.deep_reasoning else 1
+    charge_applied = 0
+
     if _entitlements_enforce():
         if not did:
             raise HTTPException(
@@ -387,33 +413,77 @@ def analyze_archive(
                 detail="缺少 X-Device-Id，无法扣次。请刷新页面或更新客户端。",
             )
         with db._connect() as conn:
-            ok, reason = consume_credit_for_analyze(
-                conn, did, initial_credits=_initial_device_credits()
+            ok, reason = consume_credits(
+                conn,
+                did,
+                charge,
+                initial_credits=_initial_device_credits(),
             )
             conn.commit()
         if not ok:
+            need = charge
             raise HTTPException(
                 status_code=402,
-                detail=f"分析次数不足（{reason}）。请关注公众号领取或兑换卡密。",
+                detail=(
+                    f"分析次数不足（{reason}），本次需要 {need} 次"
+                    + ("（含深度推理附加）。" if req.deep_reasoning else "。")
+                    + "请关注公众号领取或兑换卡密。"
+                ),
             )
+        charge_applied = charge
 
     normalized_chat_text = upload_path.read_text(encoding="utf-8", errors="replace")
+    run_id = uuid.uuid4().hex
+
     try:
-        system_prompt, user_prompt = build_system_and_user_prompts(
+        out = run_report_pipeline(
+            llm=cast(SupportsLLMComplete, llm_client),
+            db=db,
+            archive_id=archive_id,
+            run_id=run_id,
             stage=a.stage,
             scenario=a.scenario,
             tags=a.tags,
             normalized_chat_text=normalized_chat_text,
+            temperature=float(req.temperature),
+            deep_reasoning=bool(req.deep_reasoning),
         )
     except RuntimeError as e:
+        if charge_applied:
+            with db._connect() as conn:
+                refund_credits(conn, did, charge_applied)
+                conn.commit()
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        if charge_applied:
+            with db._connect() as conn:
+                refund_credits(conn, did, charge_applied)
+                conn.commit()
+        raise HTTPException(status_code=500, detail=f"pipeline failed: {e}") from e
 
-    report_text = llm_client.chat(
-        [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
-        temperature=float(req.temperature),
+    if _entitlements_enforce() and req.deep_reasoning and out.reasoner_failed and extra_dr > 0:
+        with db._connect() as conn:
+            refund_credits(conn, did, extra_dr)
+            conn.commit()
+
+    if not out.final_report.strip():
+        if charge_applied:
+            with db._connect() as conn:
+                refund_credits(conn, did, charge_applied)
+                conn.commit()
+        raise HTTPException(status_code=500, detail="empty report from pipeline")
+
+    db.save_report(archive_id, model=out.model_label, report_markdown=out.final_report)
+    usage_models = [UsageStepModel(**s) for s in out.usage_steps]
+    return AnalyzeResult(
+        archive_id=archive_id,
+        model=out.model_label,
+        report_markdown=out.final_report,
+        pipeline_version=out.pipeline_version,
+        deep_reasoning_requested=out.deep_reasoning_requested,
+        deep_reasoning_used=out.deep_reasoning_used,
+        reasoner_failed=out.reasoner_failed,
+        reasoner_error=out.reasoner_error,
+        usage_steps=usage_models,
     )
-
-    model_name = getattr(llm_client, "model", "unknown")
-    db.save_report(archive_id, model=model_name, report_markdown=report_text)
-    return AnalyzeResult(archive_id=archive_id, model=model_name, report_markdown=report_text)
 

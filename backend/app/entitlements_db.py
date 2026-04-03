@@ -148,27 +148,50 @@ def redeem_gift_code(
     return True, "ok", add
 
 
+def consume_credits(
+    conn: sqlite3.Connection,
+    device_id: str,
+    amount: int,
+    *,
+    initial_credits: int = 0,
+) -> tuple[bool, str]:
+    """原子扣减多次分析额度（amount>=1）。amount<=0 视为成功且不操作。"""
+    ensure_device(conn, device_id, initial_credits=initial_credits)
+    if amount <= 0:
+        return True, "ok"
+    row = device_row(conn, device_id)
+    if int(row["credits"]) < amount:
+        return False, "insufficient_credits"
+    now = utc_now_iso()
+    cur = conn.execute(
+        """
+        UPDATE devices SET credits = credits - ?, updated_at = ?
+        WHERE device_id = ? AND credits >= ?
+        """,
+        (amount, now, device_id, amount),
+    )
+    if cur.rowcount != 1:
+        return False, "insufficient_credits"
+    return True, "ok"
+
+
+def refund_credits(conn: sqlite3.Connection, device_id: str, amount: int) -> None:
+    """失败回滚用：将额度加回设备。"""
+    if amount <= 0:
+        return
+    ensure_device(conn, device_id, initial_credits=0)
+    row = device_row(conn, device_id)
+    new_c = int(row["credits"]) + int(amount)
+    set_device_credits(conn, device_id, new_c)
+
+
 def consume_credit_for_analyze(
     conn: sqlite3.Connection,
     device_id: str,
     *,
     initial_credits: int = 0,
 ) -> tuple[bool, str]:
-    ensure_device(conn, device_id, initial_credits=initial_credits)
-    row = device_row(conn, device_id)
-    if int(row["credits"]) < 1:
-        return False, "insufficient_credits"
-    now = utc_now_iso()
-    cur = conn.execute(
-        """
-        UPDATE devices SET credits = credits - 1, updated_at = ?
-        WHERE device_id = ? AND credits >= 1
-        """,
-        (now, device_id),
-    )
-    if cur.rowcount != 1:
-        return False, "insufficient_credits"
-    return True, "ok"
+    return consume_credits(conn, device_id, 1, initial_credits=initial_credits)
 
 
 def upsert_scene_token(conn: sqlite3.Connection, device_id: str, *, initial_credits: int = 0) -> str:

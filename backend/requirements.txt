@@ -4,6 +4,7 @@ pydantic
 pydantic-settings
 python-dotenv
 openai
+langgraph>=0.2.0
 python-multipart
 httpx
 pillow

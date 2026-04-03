@@ -54,10 +54,22 @@ npm run dev
 
 可选：`frontend/.env` 中设置 `VITE_WECHAT_MP_URL=https://mp.weixin.qq.com/...` 显示「关注公众号」外链。
 
+### 报告流水线（LangGraph · graph-v1）
+
+- 生成报告走 **多步图**：`build → base（主模型）→ finalize`；若勾选「深度推理」，在 `base` 之后追加 **`deepseek-reasoner`（可配）** 对整稿再审。
+- **用量与缓存 POC**：每次 LLM 调用写入 SQLite 表 **`llm_usage_log`**（含 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，便于对照 [DeepSeek Context Caching](https://api-docs.deepseek.com/guides/kv_cache)）。
+- **接口**：`POST /api/archives/{id}/analyze`  body 支持 `deep_reasoning`；`GET /api/config/analyze` 返回附加扣次与 reasoner 模型名（给前端展示）。
+- **设计文档**：`docs/PIPELINE实现与扩展设计.md`；总方案：`技术方案-标杆流水线与成本控制.md`。
+
+环境变量补充：
+
+- **`DEEP_REASON_EXTRA_CREDITS`**（默认 `1`）：开启深度推理时，在基础 1 次之外多扣的次数；reasoner 节点失败会自动**退回**该附加次数。
+- **`DEEPSEEK_REASONER_MODEL`**（默认 `deepseek-reasoner`）：深度节点模型名。
+
 ### 次数、卡密与公众号引流（自建）
 
 - 前端通过请求头 **`X-Device-Id`**（本地 `localStorage` UUID）标识设备；**不建账号体系**也可按设备扣次。
-- **`ENTITLEMENTS_ENFORCE=1`**：每次成功调用「生成报告」消耗 1 次；次数不足返回 HTTP 402。
+- **`ENTITLEMENTS_ENFORCE=1`**：每次「生成报告」至少消耗 **1** 次；若开启深度推理，消耗 **`1 + DEEP_REASON_EXTRA_CREDITS`**；次数不足返回 HTTP 402。
 - **`INITIAL_DEVICE_CREDITS`**：新设备默认赠送次数（生产可设 `0`；联调可设 `99`）。
 - **卡密表 `gift_codes`**：在 SQLite 中插入 `code` + `credits`，用户在前端兑换后增加次数（一次性使用）。
 
