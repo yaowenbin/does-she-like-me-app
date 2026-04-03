@@ -518,6 +518,7 @@ async function onAnalyze() {
           input_signal: res.input_signal || {},
           scoring_result: res.scoring_result || {},
           friendly_summary: res.friendly_summary || {},
+          quote_map: res.quote_map || [],
         },
         created_at: new Date().toISOString(),
       },

@@ -247,8 +247,14 @@ const extracted = computed(() => {
   }
 })
 
-const humanBlock = computed(() => getBlockAfterHeading(props.markdown || '', '一眼看懂（人话版）'))
-const heartbeatBlock = computed(() => getBlockAfterHeading(props.markdown || '', '心动指数'))
+const humanBlock = computed(() => {
+  const md = props.markdown || ''
+  return getBlockAfterHeading(md, '一眼看懂（人话版）') || getBlockAfterHeading(md, '结论')
+})
+const heartbeatBlock = computed(() => {
+  const md = props.markdown || ''
+  return getBlockAfterHeading(md, '心动指数') || getBlockAfterHeading(md, '结论')
+})
 
 function parseHeartbeatBlock(block: string) {
   if (!block) {

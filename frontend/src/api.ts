@@ -22,6 +22,7 @@ export type ArchiveDetail = {
       input_signal?: Record<string, any>
       scoring_result?: Record<string, any>
       friendly_summary?: Record<string, any>
+      quote_map?: Array<Record<string, any>>
     }
     created_at: string
   }
@@ -123,6 +124,7 @@ export type AnalyzeResultDto = {
   input_signal?: Record<string, any>
   scoring_result?: Record<string, any>
   friendly_summary?: Record<string, any>
+  quote_map?: Array<Record<string, any>>
 }
 
 export type AnalyzePlan = {
