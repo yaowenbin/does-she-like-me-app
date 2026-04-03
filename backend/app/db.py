@@ -75,10 +75,12 @@ class Database:
                     archive_id TEXT PRIMARY KEY,
                     model TEXT NOT NULL,
                     report_markdown TEXT NOT NULL,
+                    scoring_json TEXT,
                     created_at TEXT NOT NULL
                 )
                 """
             )
+            self._migrate_reports_scoring_json(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS llm_usage_log (
@@ -110,6 +112,13 @@ class Database:
         cols = {r[1] for r in rows}
         if "device_id" not in cols:
             conn.execute("ALTER TABLE archives ADD COLUMN device_id TEXT")
+
+    @staticmethod
+    def _migrate_reports_scoring_json(conn: sqlite3.Connection) -> None:
+        rows = conn.execute("PRAGMA table_info(reports)").fetchall()
+        cols = {r[1] for r in rows}
+        if "scoring_json" not in cols:
+            conn.execute("ALTER TABLE reports ADD COLUMN scoring_json TEXT")
 
     def create_archive(
         self,
@@ -241,19 +250,33 @@ class Database:
                 return None
             return Path(row["content_path"])
 
-    def save_report(self, archive_id: str, *, model: str, report_markdown: str) -> None:
+    def save_report(
+        self,
+        archive_id: str,
+        *,
+        model: str,
+        report_markdown: str,
+        scoring: Optional[Dict[str, Any]] = None,
+    ) -> None:
         now = utc_now_iso()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO reports (archive_id, model, report_markdown, created_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO reports (archive_id, model, report_markdown, scoring_json, created_at)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(archive_id) DO UPDATE SET
                     model = excluded.model,
                     report_markdown = excluded.report_markdown,
+                    scoring_json = excluded.scoring_json,
                     created_at = excluded.created_at
                 """,
-                (archive_id, model, report_markdown, now),
+                (
+                    archive_id,
+                    model,
+                    report_markdown,
+                    json.dumps(scoring or {}, ensure_ascii=False),
+                    now,
+                ),
             )
             conn.execute(
                 "UPDATE archives SET updated_at = ? WHERE id = ?",
@@ -264,15 +287,21 @@ class Database:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT model, report_markdown, created_at FROM reports WHERE archive_id = ?
+                SELECT model, report_markdown, scoring_json, created_at FROM reports WHERE archive_id = ?
                 """,
                 (archive_id,),
             ).fetchone()
             if not row:
                 return None
+            scoring: Dict[str, Any] = {}
+            try:
+                scoring = json.loads(row["scoring_json"]) if row["scoring_json"] else {}
+            except json.JSONDecodeError:
+                scoring = {}
             return {
                 "model": row["model"],
                 "report_markdown": row["report_markdown"],
+                "scoring": scoring,
                 "created_at": row["created_at"],
             }
 
@@ -312,4 +341,3 @@ class Database:
                     now,
                 ),
             )
-

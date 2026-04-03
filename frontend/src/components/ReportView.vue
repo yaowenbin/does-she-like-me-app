@@ -593,8 +593,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <details class="proFold" open>
-      <summary class="proFoldSummary">专业分析（证据、图表与量表）</summary>
+    <details class="proFold">
+      <summary class="proFoldSummary">展开深度细节（证据、图表、量表）</summary>
       <p class="proFoldHint muted">下面偏长，适合想慢慢核对细节的你；普通读者看完上面两段也可以停在这里。</p>
 
       <!-- 大屏优先：雷达图置顶首屏；窄屏上下堆叠 -->
@@ -786,4 +786,3 @@ onBeforeUnmount(() => {
     </details>
   </div>
 </template>
-

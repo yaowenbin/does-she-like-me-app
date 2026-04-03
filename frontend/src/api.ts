@@ -18,6 +18,11 @@ export type ArchiveDetail = {
   report: null | {
     model: string
     report_markdown: string
+    scoring?: {
+      input_signal?: Record<string, any>
+      scoring_result?: Record<string, any>
+      friendly_summary?: Record<string, any>
+    }
     created_at: string
   }
 }
@@ -115,6 +120,9 @@ export type AnalyzeResultDto = {
     model?: string | null
     error?: string | null
   }>
+  input_signal?: Record<string, any>
+  scoring_result?: Record<string, any>
+  friendly_summary?: Record<string, any>
 }
 
 export type AnalyzePlan = {

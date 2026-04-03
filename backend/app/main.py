@@ -11,6 +11,7 @@ from fastapi.responses import PlainTextResponse, Response
 
 from .admin_auth import require_admin_bearer
 from .db import Database, utc_now_iso
+from .domain_core import score_from_signal
 from .entitlements_db import (
     consume_credits,
     ensure_device,
@@ -51,6 +52,7 @@ from .pdf_export import report_markdown_to_pdf_bytes
 from .pipeline import run_report_pipeline
 from .pipeline.schemas import SupportsLLMComplete
 from .ocr import ocr_image_bytes
+from .signal_extractor import extract_input_signal
 from .wechat_mp import parse_subscribe_event, strip_qrscene, verify_signature
 
 
@@ -116,6 +118,60 @@ def _refund_credits_if_needed(device_id: str, amount: int) -> None:
     with db._connect() as conn:
         refund_credits(conn, device_id, amount)
         conn.commit()
+
+
+def _friendly_range_by_score(score: int) -> tuple[int, int]:
+    if score <= 20:
+        return (0, 20)
+    if score <= 40:
+        return (21, 40)
+    if score <= 60:
+        return (41, 60)
+    if score <= 80:
+        return (61, 80)
+    return (81, 100)
+
+
+def _build_user_facing_markdown(
+    *,
+    report_markdown: str,
+    scoring_result: dict,
+    friendly_summary: dict,
+) -> str:
+    score = int(scoring_result.get("total_score") or 0)
+    low, high = _friendly_range_by_score(score)
+    confidence = str(scoring_result.get("confidence") or "low")
+    headline = str(friendly_summary.get("headline") or scoring_result.get("level") or "样本不足")
+    easy_summary = str(friendly_summary.get("easy_summary") or "")
+    next_step = str(friendly_summary.get("next_step") or "先用低压力互动验证，不要一次性重投入。")
+    stop_rule = str(friendly_summary.get("stop_rule") or "连续被回避时先暂停投入，避免情绪透支。")
+    risk_flags = friendly_summary.get("risk_flags") or []
+    top_reasons = friendly_summary.get("top_reasons") or []
+    reason_lines = []
+    for r in top_reasons[:4]:
+        if isinstance(r, dict):
+            reason_lines.append(
+                f"- {str(r.get('skill_name') or r.get('skill_id') or '关键信号')}：{str(r.get('score') or '--')}"
+            )
+    risk_line = "、".join([str(x) for x in risk_flags]) if isinstance(risk_flags, list) else str(risk_flags)
+    preface = (
+        "## 一眼看懂（人话版）\n"
+        f"- **结论**：{headline}\n"
+        f"- **一句话**：{easy_summary}\n"
+        f"- **置信度**：{confidence}\n"
+        f"- **主要风险**：{risk_line or '未见显著高风险'}\n\n"
+        "## 心动指数\n"
+        f"- **区间**：{low}-{high}\n"
+        f"- **分数**：{score}/100\n"
+        f"- **一句话**：{headline}\n\n"
+        "## 你最该看什么\n"
+        + ("\n".join(reason_lines) if reason_lines else "- 样本不足，建议补充近 2-4 周对话后再判断。")
+        + "\n\n"
+        "## 下一步与何时停\n"
+        f"- **下一步**：{next_step}\n"
+        f"- **何时停**：{stop_rule}\n"
+    )
+    return f"{preface}\n\n---\n\n{report_markdown}"
 
 
 def _require_x_device_id(x_device_id: str | None) -> str:
@@ -657,13 +713,34 @@ def analyze_archive(
         _refund_credits_if_needed(did, charge_applied)
         raise HTTPException(status_code=500, detail="empty report from pipeline")
 
-    db.save_report(archive_id, model=out.model_label, report_markdown=out.final_report)
+    input_signal = extract_input_signal(
+        normalized_chat_text=normalized_chat_text,
+        stage=a.stage,
+        scenario=a.scenario,
+        tags=a.tags,
+    )
+    domain_out = score_from_signal(input_signal)
+    final_markdown = _build_user_facing_markdown(
+        report_markdown=out.final_report,
+        scoring_result=domain_out.scoring,
+        friendly_summary=domain_out.friendly,
+    )
+    db.save_report(
+        archive_id,
+        model=out.model_label,
+        report_markdown=final_markdown,
+        scoring={
+            "input_signal": input_signal,
+            "scoring_result": domain_out.scoring,
+            "friendly_summary": domain_out.friendly,
+        },
+    )
     usage_models = [UsageStepModel(**s) for s in out.usage_steps]
     trace_models = [TraceStepModel(**s) for s in out.execution_trace]
     return AnalyzeResult(
         archive_id=archive_id,
         model=out.model_label,
-        report_markdown=out.final_report,
+        report_markdown=final_markdown,
         pipeline_version=out.pipeline_version,
         deep_reasoning_requested=out.deep_reasoning_requested,
         deep_reasoning_used=out.deep_reasoning_used,
@@ -671,4 +748,7 @@ def analyze_archive(
         reasoner_error=out.reasoner_error,
         usage_steps=usage_models,
         execution_trace=trace_models,
+        input_signal=input_signal,
+        scoring_result=domain_out.scoring,
+        friendly_summary=domain_out.friendly,
     )

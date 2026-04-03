@@ -67,6 +67,9 @@ class AnalyzeResult(BaseModel):
     reasoner_error: Optional[str] = None
     usage_steps: List[UsageStepModel] = Field(default_factory=list)
     execution_trace: List[TraceStepModel] = Field(default_factory=list)
+    input_signal: Dict[str, Any] = Field(default_factory=dict)
+    scoring_result: Dict[str, Any] = Field(default_factory=dict)
+    friendly_summary: Dict[str, Any] = Field(default_factory=dict)
 
 
 class AnalyzeFeaturesResponse(BaseModel):

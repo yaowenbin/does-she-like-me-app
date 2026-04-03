@@ -54,6 +54,8 @@ const analyzeFeatures = ref<AnalyzeFeatures | null>(null)
 const analysisWarn = ref<string | null>(null)
 const analysisTrace = ref<Array<{ step: string; status: string; model?: string | null; error?: string | null }>>([])
 const analyzePlan = ref<AnalyzePlan | null>(null)
+const scoringResult = ref<Record<string, any> | null>(null)
+const friendlySummary = ref<Record<string, any> | null>(null)
 const redeemForm = reactive({ code: '' })
 const redeemFormRef = ref<FormInst | null>(null)
 const wechatShortCode = ref('')
@@ -298,6 +300,8 @@ async function refreshDetail() {
   if (!activeId.value) {
     detail.value = null
     analysisTrace.value = []
+    scoringResult.value = null
+    friendlySummary.value = null
     return
   }
   try {
@@ -324,6 +328,8 @@ async function refreshDetail() {
   ocrState.importedSize = 0
   ocrState.preview = ''
   analysisTrace.value = []
+  scoringResult.value = (detail.value.report as any)?.scoring?.scoring_result || null
+  friendlySummary.value = (detail.value.report as any)?.scoring?.friendly_summary || null
   await refreshAnalyzePlan()
 }
 
@@ -487,12 +493,19 @@ async function onAnalyze() {
     }
     await refreshDetail()
     analysisTrace.value = Array.isArray(res.execution_trace) ? res.execution_trace : []
+    scoringResult.value = res.scoring_result || null
+    friendlySummary.value = res.friendly_summary || null
     // detail 会刷新到最新 report
     detail.value = {
       ...(detail.value as any),
       report: {
         model: res.model,
         report_markdown: res.report_markdown,
+        scoring: {
+          input_signal: res.input_signal || {},
+          scoring_result: res.scoring_result || {},
+          friendly_summary: res.friendly_summary || {},
+        },
         created_at: new Date().toISOString(),
       },
     }
@@ -1063,6 +1076,34 @@ watch(reportFullscreen, (v) => {
             {{ analysisWarn }}
           </div>
 
+          <div v-if="friendlySummary" class="friendlyCard">
+            <div class="friendlyHead">
+              <div class="friendlyTitle">给你的直观结论</div>
+              <div class="friendlyScore">{{ friendlySummary.score ?? '--' }}</div>
+            </div>
+            <div class="friendlyBand">{{ friendlySummary.headline || '样本不足' }}</div>
+            <div class="muted" style="margin-top: 6px">{{ friendlySummary.easy_summary || '' }}</div>
+            <div v-if="Array.isArray(friendlySummary.top_reasons) && friendlySummary.top_reasons.length" class="friendlyReasons">
+              <div class="small">主要依据</div>
+              <div v-for="r in friendlySummary.top_reasons" :key="`${r.skill_id}-${r.skill_name}`" class="friendlyReasonItem">
+                - {{ r.skill_name }}（{{ r.score }}）
+              </div>
+            </div>
+            <div v-if="Array.isArray(friendlySummary.risk_flags) && friendlySummary.risk_flags.length" class="friendlyRisk">
+              风险提示：{{ friendlySummary.risk_flags.join('、') }}
+            </div>
+            <div class="friendlyAction">
+              <div><b>下一步：</b>{{ friendlySummary.next_step || '先低压力沟通，再观察是否有稳定回应。' }}</div>
+              <div style="margin-top: 4px"><b>何时停：</b>{{ friendlySummary.stop_rule || '连续被回避时先暂停投入，优先照顾自己。' }}</div>
+            </div>
+          </div>
+
+          <div v-if="scoringResult" class="scoreBrief">
+            <span>置信度：{{ scoringResult.confidence || 'low' }}</span>
+            <span> · </span>
+            <span>等级：{{ scoringResult.level || '样本不足' }}</span>
+          </div>
+
           <div v-if="analysisTrace.length" class="traceCard">
             <div class="traceTitle">本次调度轨迹</div>
             <div v-for="(t, idx) in analysisTrace" :key="`${t.step}-${idx}`" class="traceItem">
@@ -1193,5 +1234,56 @@ watch(reportFullscreen, (v) => {
   font-size: 12px;
   color: #9a2b2b;
   word-break: break-word;
+}
+.friendlyCard {
+  margin-top: 12px;
+  border: 1px solid rgba(255, 126, 95, 0.32);
+  background: rgba(255, 126, 95, 0.1);
+  border-radius: 12px;
+  padding: 12px;
+}
+.friendlyHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.friendlyTitle {
+  font-size: 14px;
+  font-weight: 700;
+}
+.friendlyScore {
+  min-width: 48px;
+  text-align: center;
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.85);
+  font-weight: 700;
+}
+.friendlyBand {
+  margin-top: 6px;
+  font-weight: 600;
+  color: #7d2d1b;
+}
+.friendlyReasons {
+  margin-top: 8px;
+}
+.friendlyReasonItem {
+  font-size: 12px;
+  line-height: 1.6;
+}
+.friendlyRisk {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #9a2b2b;
+}
+.friendlyAction {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.scoreBrief {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #6c6c6c;
 }
 </style>
